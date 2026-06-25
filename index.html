@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Quản lý tạm ứng viện phí</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+  <div id="loginView" class="login-view">
+    <div class="login-card">
+      <div class="brand-block">
+        <img src="assets/logo.png" alt="Logo" class="login-logo" />
+        <div>
+          <h1>Quản lý tạm ứng viện phí</h1>
+          <p>Trung tâm Y tế khu vực Hàm Thuận Bắc</p>
+        </div>
+      </div>
+
+      <div id="loginForm">
+        <label>Tên đăng nhập</label>
+        <input id="loginUsername" autocomplete="username" placeholder="Ví dụ: admin" />
+        <label>Mật khẩu</label>
+        <input id="loginPassword" type="password" autocomplete="current-password" placeholder="Mật khẩu" />
+        <button id="btnLogin" class="btn primary full">Đăng nhập</button>
+      </div>
+
+      <div id="firstPasswordBox" class="hidden">
+        <h2>Đổi mật khẩu</h2>
+        <p class="muted">Tài khoản này cần đổi mật khẩu trước khi sử dụng.</p>
+        <label>Mật khẩu hiện tại</label>
+        <input id="cpCurrent" type="password" />
+        <label>Mật khẩu mới</label>
+        <input id="cpNew" type="password" />
+        <label>Nhập lại mật khẩu mới</label>
+        <input id="cpConfirm" type="password" />
+        <button id="btnForceChangePassword" class="btn primary full">Cập nhật mật khẩu</button>
+        <button id="btnBackLogin" class="btn ghost full">Quay lại đăng nhập</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="appView" class="app-view hidden">
+    <header class="topbar">
+      <div class="top-left">
+        <img src="assets/logo.png" alt="Logo" class="top-logo" />
+        <div>
+          <h1>Quản lý tạm ứng viện phí</h1>
+          <p id="unitNameText">Trung tâm Y tế khu vực Hàm Thuận Bắc</p>
+        </div>
+      </div>
+    </header>
+
+    <aside class="sidebar">
+      <nav class="tabs" id="tabs"></nav>
+      <div class="sidebar-account">
+        <div class="user-pill">
+          <span id="currentUserText"></span>
+          <span id="currentRoleText"></span>
+        </div>
+        <button id="btnOpenChangePassword" class="btn small">Đổi mật khẩu</button>
+        <button id="btnLogout" class="btn small danger">Đăng xuất</button>
+      </div>
+    </aside>
+
+    <main>
+      <section id="tabReport" class="tab-panel">
+        <div class="section-head report-title-row">
+          <div>
+            <h2>Báo cáo nộp tạm ứng viện phí và phát hành HĐĐT</h2>
+          </div>
+        </div>
+
+        <div class="grid upload-grid">
+          <div class="card upload-card">
+            <h3>1. File thu tạm ứng từ HIS</h3>
+            <div class="file-row">
+              <input type="file" id="advanceFile" accept=".xlsx,.xls" />
+              <button id="btnClearAdvanceFile" class="btn small danger" type="button">Xóa file</button>
+            </div>
+            <button id="btnReadAdvance" class="btn primary full-on-mobile">Đọc file thu tạm ứng</button>
+            <div id="advanceImportSummary" class="summary-line"></div>
+          </div>
+
+          <div class="card upload-card">
+            <h3>2. File tình trạng phát hành HĐĐT từ HIS</h3>
+            <div class="file-row">
+              <input type="file" id="invoiceFile" accept=".xlsx,.xls" />
+              <button id="btnClearInvoiceFile" class="btn small danger" type="button">Xóa file</button>
+            </div>
+            <button id="btnReadInvoice" class="btn primary full-on-mobile">Đọc file HĐĐT</button>
+            <div id="invoiceImportSummary" class="summary-line"></div>
+          </div>
+
+          <div class="card upload-action-card">
+            <h3>Thao tác</h3>
+            <button id="btnBuildReport" class="btn primary full">Tạo báo cáo mới</button>
+            <button id="btnFinalizeReport" class="btn full">Chốt báo cáo</button>
+            <button id="btnPreviewReport" class="btn full">Xem trước báo cáo</button>
+            <button id="btnSubmitReport" class="btn primary full">Gửi thủ quỹ</button>
+          </div>
+        </div>
+
+        <div class="card report-info-card compact-report-info">
+          <h3>Thông tin báo cáo</h3>
+          <div class="form-grid four">
+            <div>
+              <label>Tiền tạm ứng thu hồi</label>
+              <input id="refundAmount" class="money-input" type="text" placeholder="0" />
+            </div>
+            <div>
+              <label>Tiền mặt ứng quỹ</label>
+              <input id="cashFloat" class="money-input" type="text" placeholder="0" />
+            </div>
+            <div>
+              <label>Tiền tạm ứng đã xử lý mất phiếu</label>
+              <input id="lostReceiptAmount" class="money-input" type="text" placeholder="0" readonly title="Bấm để xem/chọn hồ sơ mất phiếu" />
+            </div>
+            <div>
+              <label>Ghi chú báo cáo</label>
+              <input id="reportNote" placeholder="Ghi chú nếu có" />
+            </div>
+          </div>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat"><span>Tổng thu tạm ứng</span><b id="sumAdvance">0</b></div>
+          <div class="stat"><span>Tổng HĐĐT</span><b id="sumInvoice">0</b></div>
+          <div class="stat strong"><span>Còn lại phải nộp</span><b id="sumRemainPay">0</b></div>
+        </div>
+
+        <div class="grid two treasurer-confirm-grid">
+          <div class="card table-card">
+            <div class="table-head">
+              <h3>Danh sách thu tạm ứng</h3>
+              <input id="advanceSearch" placeholder="Tìm trong danh sách..." />
+            </div>
+            <div class="table-wrap"><table id="advanceTable"></table></div>
+          </div>
+          <div class="card table-card">
+            <div class="table-head">
+              <h3>Danh sách HĐĐT</h3>
+              <input id="invoiceSearch" placeholder="Tìm trong danh sách..." />
+            </div>
+            <div class="table-wrap"><table id="invoiceTable"></table></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="table-head">
+            <h3>Báo cáo đã lập</h3>
+            <button id="btnReloadReports" class="btn small">Tải lại</button>
+          </div>
+          <div class="table-wrap"><table id="myReportsTable"></table></div>
+        </div>
+      </section>
+
+      <section id="tabLost" class="tab-panel hidden">
+        <div class="section-head">
+          <div>
+            <h2>Xử lý mất giấy tạm ứng viện phí</h2>
+            <p>Tìm phiếu, lưu hồ sơ ảnh và chuyển thủ quỹ xác nhận.</p>
+          </div>
+          <div class="actions">
+            <button id="btnSaveLostCase" class="btn primary">Hoàn thành xử lý</button>
+            <button id="btnPrintLostCase" class="btn">In chứng từ</button>
+          </div>
+        </div>
+
+        <div class="grid two">
+          <div class="card">
+            <h3>Tìm phiếu tạm ứng</h3>
+            <div class="search-row">
+              <input id="lostSearchInput" placeholder="Nhập họ tên, số phiếu, khoa/phòng..." />
+              <button id="btnSearchReceipt" class="btn primary">Tìm</button>
+            </div>
+            <div class="table-wrap mini"><table id="lostSearchTable"></table></div>
+          </div>
+
+          <div class="card">
+            <h3>Thông tin hồ sơ mất phiếu</h3>
+            <div class="selected-box" id="selectedReceiptBox">Chưa chọn phiếu.</div>
+            <div class="form-grid two">
+              <div>
+                <label>Người yêu cầu xử lý</label>
+                <input id="lostRequester" />
+              </div>
+              <div>
+                <label>Số CCCD/giấy tờ</label>
+                <input id="lostIdNo" />
+              </div>
+              <div>
+                <label>Ngày xử lý mất phiếu</label>
+                <input id="lostProcessDate" type="date" />
+              </div>
+            </div>
+            <label>Lý do mất phiếu</label>
+            <textarea id="lostReason" rows="3"></textarea>
+            <label>Ghi chú</label>
+            <input id="lostNote" />
+            <label>Upload hình ảnh hồ sơ</label>
+            <input id="lostImages" type="file" accept="image/*" multiple />
+            <div id="lostImagePreview" class="image-preview"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="table-head">
+            <h3>Danh sách hồ sơ mất phiếu</h3>
+            <button id="btnReloadLostCases" class="btn small">Tải lại</button>
+          </div>
+          <div class="table-wrap"><table id="lostCasesTable"></table></div>
+        </div>
+      </section>
+
+      <section id="tabTreasurer" class="tab-panel hidden">
+        <div class="section-head">
+          <div>
+            <h2>Tài khoản thủ quỹ</h2>
+            <p>Xác nhận báo cáo kế toán viên gửi, xác nhận hồ sơ mất phiếu và in báo cáo thu chi tạm ứng.</p>
+          </div>
+        </div>
+
+        <div class="grid two">
+          <div class="card table-card">
+            <div class="table-head">
+              <h3>Báo cáo chờ xác nhận</h3>
+              <button id="btnReloadTreasurerReports" class="btn small">Tải lại</button>
+            </div>
+            <div class="table-wrap"><table id="treasurerReportsTable"></table></div>
+          </div>
+          <div class="card table-card hidden treasurer-hidden-section">
+            <div class="table-head">
+              <h3>Hồ sơ mất phiếu chờ xác nhận</h3>
+              <button id="btnReloadTreasurerLost" class="btn small">Tải lại</button>
+            </div>
+            <div class="table-wrap"><table id="treasurerLostTable"></table></div>
+          </div>
+        </div>
+
+        <div class="card hidden treasurer-hidden-section">
+          <h3>Nhập dòng trả tạm ứng</h3>
+          <div class="form-grid five">
+            <div><label>Ngày trả</label><input id="refundDate" type="date" /></div>
+            <div><label>Số phiếu thu</label><input id="refundReceiptNo" /></div>
+            <div><label>Họ tên bệnh nhân</label><input id="refundPatientName" /></div>
+            <div><label>Số tiền trả</label><input id="refundMoney" class="money-input" /></div>
+            <div><label>Ghi chú</label><input id="refundNote" /></div>
+          </div>
+          <button id="btnAddRefund" class="btn primary">Lưu dòng trả tạm ứng</button>
+        </div>
+
+        <div class="card">
+          <div class="table-head">
+            <h3>Báo cáo thu chi tạm ứng viện phí</h3>
+            <div class="actions inline-actions">
+              <input id="cashbookFrom" type="date" />
+              <input id="cashbookTo" type="date" />
+              <button id="btnBuildCashbook" class="btn primary">Lập báo cáo</button>
+              <button id="btnPrintCashbook" class="btn">In</button>
+              <button id="btnExportCashbook" class="btn">Xuất Excel/CSV</button>
+              <button id="btnListProblemReceipts" class="btn danger">Liệt kê phiếu thu có vấn đề</button>
+            </div>
+          </div>
+          <div class="table-wrap"><table id="cashbookTable"></table></div>
+        </div>
+
+        <div class="card" id="problemReceiptCard">
+          <div class="table-head">
+            <h3>Phiếu thu có vấn đề</h3>
+            <div class="summary-line" id="problemReceiptSummary"></div>
+          </div>
+          <div class="table-wrap"><table id="problemReceiptTable"></table></div>
+        </div>
+      </section>
+
+      <section id="tabUsers" class="tab-panel hidden">
+        <div class="section-head">
+          <div>
+            <h2>Quản lý tài khoản</h2>
+            <p>Admin cấp tài khoản, gán vai trò và tên người thu/người phát hành trên HIS.</p>
+          </div>
+          <div class="actions">
+            <button id="btnUserNew" class="btn">Tạo mới</button>
+            <button id="btnUserSave" class="btn primary">Lưu tài khoản</button>
+          </div>
+        </div>
+
+        <div class="grid two admin-grid">
+          <div class="card">
+            <h3>Thông tin tài khoản</h3>
+            <input id="userId" type="hidden" />
+            <div class="form-grid two">
+              <div><label>Tên đăng nhập</label><input id="userUsername" /></div>
+              <div><label>Mật khẩu tạm</label><input id="userPassword" type="password" placeholder="Nhập khi tạo mới/reset" /></div>
+              <div><label>Họ và tên</label><input id="userFullName" /></div>
+              <div><label>Tên trên file HIS</label><input id="userHisName" /></div>
+              <div>
+                <label>Vai trò</label>
+                <select id="userRole">
+                  <option value="ketoan">Kế toán viên</option>
+                  <option value="thuquy">Thủ quỹ</option>
+                  <option value="truongphong">Trưởng phòng</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <div>
+                <label>Trạng thái</label>
+                <select id="userActive">
+                  <option value="true">Đang hoạt động</option>
+                  <option value="false">Khóa</option>
+                </select>
+              </div>
+              <div>
+                <label>Bắt đổi mật khẩu</label>
+                <select id="userMustChange">
+                  <option value="true">Có</option>
+                  <option value="false">Không</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Cấu hình phần mềm</h3>
+            <div class="form-grid two">
+              <div><label>Tên đơn vị</label><input id="settingUnitName" /></div>
+              <div><label>Logo hiện tại</label><img src="assets/logo.png" class="setting-logo" /></div>
+            </div>
+            <button id="btnSaveSettings" class="btn primary">Lưu cấu hình</button>
+            <button id="btnClearTestData" class="btn danger">Xóa dữ liệu test</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="table-head">
+            <h3>Danh sách tài khoản</h3>
+            <button id="btnReloadUsers" class="btn small">Tải lại</button>
+          </div>
+          <div class="table-wrap"><table id="usersTable"></table></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="passwordModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>Đổi mật khẩu</h3>
+        <button id="btnClosePasswordModal" class="icon-btn">×</button>
+      </div>
+      <label>Mật khẩu hiện tại</label>
+      <input id="modalCurrentPassword" type="password" />
+      <label>Mật khẩu mới</label>
+      <input id="modalNewPassword" type="password" />
+      <label>Nhập lại mật khẩu mới</label>
+      <input id="modalConfirmPassword" type="password" />
+      <button id="btnChangePassword" class="btn primary full">Cập nhật</button>
+    </div>
+  </div>
+
+
+
+  <div id="printPeriodModal" class="modal hidden">
+    <div class="modal-card print-period-card">
+      <div class="modal-head">
+        <div>
+          <h3 id="periodModalTitle">Chọn thời gian in báo cáo</h3>
+          <p id="periodModalDesc" class="muted">Nhập khoảng thời gian sẽ hiển thị trên báo cáo in.</p>
+        </div>
+        <button id="btnClosePrintPeriodModal" class="icon-btn">×</button>
+      </div>
+      <div class="form-grid two print-period-grid">
+        <div>
+          <label>Từ ngày</label>
+          <input id="printDateFrom" type="date" />
+        </div>
+        <div>
+          <label>Đến ngày</label>
+          <input id="printDateTo" type="date" />
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="btnCancelPrintPeriod" class="btn">Hủy</button>
+        <button id="btnConfirmPrintPeriod" class="btn primary">In báo cáo</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="receiptModal" class="modal hidden">
+    <div class="modal-card wide-modal receipt-modal-card">
+      <div class="modal-head">
+        <div>
+          <h3>Chọn biên lai thu hồi tạm ứng</h3>
+          <p class="muted">Hiển thị biên lai thu tạm ứng đang có trên màn hình và trong báo cáo đã gửi/xác nhận.</p>
+        </div>
+        <button id="btnCloseReceiptModal" class="icon-btn">×</button>
+      </div>
+      <div class="modal-toolbar receipt-toolbar">
+        <input id="receiptHistorySearch" placeholder="Tìm ngày thu, phiếu thu, họ tên, khoa/phòng, người thu..." />
+        <button id="btnUseReceiptHistoryTotal" class="btn primary">Lấy tổng đã chọn vào ô</button>
+      </div>
+      <div class="receipt-total-line">Tổng tiền đã chọn: <b id="receiptHistoryTotal">0</b></div>
+      <div class="table-wrap modal-table-wrap"><table id="receiptHistoryTable" class="receipt-history-table"></table></div>
+    </div>
+  </div>
+
+  <div id="lostReceiptModal" class="modal hidden">
+    <div class="modal-card wide-modal receipt-modal-card">
+      <div class="modal-head">
+        <div>
+          <h3>Chọn hồ sơ mất phiếu đã xử lý</h3>
+          <p class="muted">Tích chọn các hồ sơ mất phiếu để cộng vào ô tiền tạm ứng đã xử lý mất phiếu.</p>
+        </div>
+        <button id="btnCloseLostReceiptModal" class="icon-btn">×</button>
+      </div>
+      <div class="modal-toolbar receipt-toolbar">
+        <input id="lostReceiptHistorySearch" placeholder="Tìm ngày xử lý, phiếu thu, họ tên, khoa/phòng..." />
+        <button id="btnUseLostReceiptTotal" class="btn primary">Lấy tổng đã chọn vào ô</button>
+      </div>
+      <div class="receipt-total-line">Tổng tiền đã chọn: <b id="lostReceiptHistoryTotal">0</b></div>
+      <div class="table-wrap modal-table-wrap"><table id="lostReceiptHistoryTable" class="receipt-history-table"></table></div>
+    </div>
+  </div>
+  <div id="toast" class="toast hidden"></div>
+  <div id="printArea" class="print-area"></div>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
+  <script src="firebase-config.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
