@@ -2356,7 +2356,7 @@ function makePrintHeader(title, subtitle = '') {
   return `
     <div class="print-doc">
       <div class="print-header">
-        <img src="assets/logo.png" />
+        <img src="logo.png" />
         <div>
           <b>${escapeHtml(settings.unitName || 'Trung tâm Y tế khu vực Hàm Thuận Bắc')}</b><br>
           <span>Phần mềm quản lý tạm ứng viện phí</span>
