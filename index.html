@@ -101,6 +101,7 @@
             <button id="btnBuildReport" class="btn primary full">Tạo báo cáo mới</button>
             <button id="btnFinalizeReport" class="btn full">Chốt báo cáo</button>
             <button id="btnPreviewReport" class="btn full">Xem trước báo cáo</button>
+            <button id="btnPrintCurrentRecovered" class="btn full">In báo cáo thu hồi</button>
             <button id="btnSubmitReport" class="btn primary full">Gửi thủ quỹ</button>
           </div>
         </div>
@@ -148,6 +149,14 @@
             </div>
             <div class="table-wrap"><table id="invoiceTable"></table></div>
           </div>
+        </div>
+
+        <div class="card" id="selectedRecoveredCard">
+          <div class="table-head">
+            <h3>Danh sách biên lai đã thu hồi tạm ứng trong báo cáo</h3>
+            <div class="summary-line" id="selectedRecoveredSummary"></div>
+          </div>
+          <div class="table-wrap"><table id="selectedRecoveredTable"></table></div>
         </div>
 
         <div class="card">
@@ -265,6 +274,7 @@
               <button id="btnExportCashbook" class="btn">Xuất Excel/CSV</button>
               <button id="btnBuildRecoveredReceipts" class="btn">DS biên lai đã thu hồi</button>
               <button id="btnPrintRecoveredReceipts" class="btn">In DS thu hồi</button>
+              <button id="btnOpenRecoveredParams" class="btn primary">In thu hồi theo tham số</button>
               <button id="btnListProblemReceipts" class="btn danger">Liệt kê phiếu thu có vấn đề</button>
             </div>
           </div>
@@ -401,6 +411,52 @@
       <div class="modal-actions">
         <button id="btnCancelPrintPeriod" class="btn">Hủy</button>
         <button id="btnConfirmPrintPeriod" class="btn primary">In báo cáo</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="recoveredParamsModal" class="modal hidden">
+    <div class="modal-card wide-modal recovered-params-card">
+      <div class="modal-head">
+        <div>
+          <h3>Chọn tham số báo cáo thu hồi tạm ứng</h3>
+          <p class="muted">Áp dụng cho toàn bộ dữ liệu đã lưu trên hệ thống.</p>
+        </div>
+        <button id="btnCloseRecoveredParams" class="icon-btn">×</button>
+      </div>
+      <div class="form-grid two">
+        <div>
+          <label>Từ ngày thu hồi</label>
+          <input id="recoveredParamFrom" type="date" />
+        </div>
+        <div>
+          <label>Đến ngày thu hồi</label>
+          <input id="recoveredParamTo" type="date" />
+        </div>
+        <div>
+          <label>Người thu hồi</label>
+          <select id="recoveredParamPayer">
+            <option value="">Tất cả tài khoản</option>
+          </select>
+        </div>
+        <div>
+          <label>Nguồn thu hồi</label>
+          <select id="recoveredParamSource">
+            <option value="all">Tất cả nguồn</option>
+            <option value="report">Theo báo cáo nộp tiền</option>
+            <option value="lost">Xử lý mất phiếu</option>
+            <option value="manual">Trả tạm ứng nhập thủ công</option>
+          </select>
+        </div>
+        <div class="form-span-two">
+          <label>Tìm theo số phiếu hoặc tên bệnh nhân</label>
+          <input id="recoveredParamKeyword" placeholder="Để trống nếu lấy toàn bộ" />
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="btnCancelRecoveredParams" class="btn">Hủy</button>
+        <button id="btnPreviewRecoveredParams" class="btn">Xem danh sách</button>
+        <button id="btnPrintRecoveredParams" class="btn primary">In báo cáo</button>
       </div>
     </div>
   </div>

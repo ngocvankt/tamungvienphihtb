@@ -443,6 +443,8 @@ function applyRoleControls() {
   ['btnSaveLostCase'].forEach(id => {
     const el = $(id); if (el) el.disabled = !isKetoanLike;
   });
+  const recoveredParamBtn = $('btnOpenRecoveredParams');
+  if (recoveredParamBtn) recoveredParamBtn.classList.toggle('hidden', !['admin', 'thuquy'].includes(currentUser.role));
 }
 
 function readFileAsArrayBuffer(file) {
@@ -1137,6 +1139,41 @@ function useReceiptHistoryTotal() {
 }
 
 
+function getSelectedRecoveredRowsForReport(report = currentReport) {
+  const ids = new Set(report.selectedRefundRowIds || []);
+  if (!ids.size) return [];
+  return getReceiptHistoryRows()
+    .filter(row => ids.has(row.id))
+    .map(row => ({
+      ...row,
+      recoveredDateISO: report.reportDateISO || (report.createdAt || '').slice(0, 10) || todayISO(),
+      recoveredDate: formatPrintDate(report.reportDateISO || (report.createdAt || '').slice(0, 10) || todayISO()),
+      recoveredBy: report.createdByName || currentUser?.fullName || ''
+    }))
+    .sort((a, b) => String(a.receiptNo || '').localeCompare(String(b.receiptNo || ''), 'vi', { numeric: true }));
+}
+
+function renderSelectedRecoveredRows() {
+  const table = $('selectedRecoveredTable');
+  if (!table) return;
+  const rows = getSelectedRecoveredRowsForReport(currentReport);
+  renderTable('selectedRecoveredTable', ['Số phiếu thu', 'Ngày thu', 'Họ tên bệnh nhân', 'Tuổi', 'Số tiền đã tạm ứng', 'Số tiền đã thu hồi', 'Ngày thu hồi', 'Người thu hồi'], rows, row => `
+    <tr>
+      <td>${escapeHtml(row.receiptNo)}</td>
+      <td>${escapeHtml(row.date)}</td>
+      <td>${escapeHtml(row.patientName)}</td>
+      <td>${escapeHtml(row.age)}</td>
+      <td class="money">${formatMoney(row.amount)}</td>
+      <td class="money">${formatMoney(row.amount)}</td>
+      <td>${escapeHtml(row.recoveredDate)}</td>
+      <td>${escapeHtml(row.recoveredBy)}</td>
+    </tr>`, 'Chưa chọn biên lai thu hồi tạm ứng.');
+  const total = rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  setTableFooter('selectedRecoveredTable', `<tr><th colspan="4" style="text-align:right">Tổng cộng</th><th class="money">${formatMoney(total)}</th><th class="money">${formatMoney(total)}</th><th colspan="2"></th></tr>`);
+  if ($('selectedRecoveredSummary')) $('selectedRecoveredSummary').textContent = rows.length ? `Tổng số biên lai: ${rows.length}; tổng tiền thu hồi: ${formatMoney(total)}` : '';
+}
+
+
 function getLostReceiptHistoryRows() {
   const validStatuses = new Set(['confirmed', 'completed']);
   return getLostCases()
@@ -1285,6 +1322,7 @@ function renderReportTables() {
     </tr>`);
   setTableFooter('invoiceTable', `<tr><th colspan="3" style="text-align:right">Tổng cộng</th><th class="money">${formatMoney(inv.reduce((s, r) => s + Number(r.amount || 0), 0))}</th><th></th></tr>`);
 
+  renderSelectedRecoveredRows();
   updateReportTotals();
 }
 
@@ -1577,6 +1615,7 @@ function renderMyReports() {
         <button class="btn small" onclick="loadReport('${r.id}')">${canEdit ? 'Sửa' : 'Xem'}</button>
         ${canDelete ? `<button class="btn small danger" onclick="deleteReport('${r.id}')">Xóa</button>` : ''}
         <button class="btn small" onclick="printReportById('${r.id}')">In</button>
+        <button class="btn small" onclick="printRecoveredReportById('${r.id}')">In thu hồi</button>
       </div></td>
     </tr>`;
   });
@@ -1654,6 +1693,7 @@ function renderTreasurerReports() {
       <td>${statusBadge(r.status)}</td>
       <td><div class="row-actions">
         <button class="btn small" onclick="printReportById('${r.id}')">In</button>
+        <button class="btn small" onclick="printRecoveredReportById('${r.id}')">In thu hồi</button>
         ${canConfirm ? `<button class="btn small primary" onclick="confirmReport('${r.id}')">Xác nhận</button><button class="btn small danger" onclick="rejectReport('${r.id}')">Trả lại</button>` : ''}
       </div></td>
     </tr>`;
@@ -2210,6 +2250,208 @@ function renderRecoveredReceiptsReport() {
 }
 
 
+
+function recoveredSourceLabel(source) {
+  return ({
+    all: 'Tất cả nguồn',
+    report: 'Theo báo cáo nộp tiền',
+    lost: 'Xử lý mất phiếu',
+    manual: 'Trả tạm ứng nhập thủ công'
+  })[source] || 'Tất cả nguồn';
+}
+
+function populateRecoveredPayerOptions() {
+  const select = $('recoveredParamPayer');
+  if (!select) return;
+  const currentValue = select.value;
+  const names = new Set();
+  getUsers().forEach(u => { if (u.fullName) names.add(u.fullName); });
+  getReports().forEach(r => { if (r.createdByName) names.add(r.createdByName); });
+  getRefunds().forEach(r => { if (r.createdByName) names.add(r.createdByName); });
+  getLostCases().forEach(c => {
+    if (c.createdByName) names.add(c.createdByName);
+    if (c.treasurerName) names.add(c.treasurerName);
+  });
+  select.innerHTML = '<option value="">Tất cả tài khoản</option>' + Array.from(names)
+    .filter(Boolean)
+    .sort((a, b) => String(a).localeCompare(String(b), 'vi'))
+    .map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+    .join('');
+  if (Array.from(select.options).some(o => o.value === currentValue)) select.value = currentValue;
+}
+
+function openRecoveredParamsModal() {
+  if (!['admin', 'thuquy'].includes(currentUser?.role)) {
+    return showToast('Chỉ admin hoặc thủ quỹ được in báo cáo thu hồi theo tham số.', 'error');
+  }
+  populateRecoveredPayerOptions();
+  const today = todayISO();
+  const monthStart = `${today.slice(0, 8)}01`;
+  if (!$('recoveredParamFrom').value) $('recoveredParamFrom').value = monthStart;
+  if (!$('recoveredParamTo').value) $('recoveredParamTo').value = today;
+  $('recoveredParamsModal').classList.remove('hidden');
+  setTimeout(() => $('recoveredParamFrom')?.focus(), 50);
+}
+
+function closeRecoveredParamsModal() {
+  $('recoveredParamsModal')?.classList.add('hidden');
+}
+
+function readRecoveredParams() {
+  const params = {
+    from: $('recoveredParamFrom')?.value || '',
+    to: $('recoveredParamTo')?.value || '',
+    payer: $('recoveredParamPayer')?.value || '',
+    source: $('recoveredParamSource')?.value || 'all',
+    keyword: normalizeText($('recoveredParamKeyword')?.value || '')
+  };
+  if (!params.from || !params.to) {
+    showToast('Chọn đủ từ ngày và đến ngày.', 'error');
+    return null;
+  }
+  if (params.from > params.to) {
+    showToast('Từ ngày không được lớn hơn đến ngày.', 'error');
+    return null;
+  }
+  return params;
+}
+
+function collectRecoveredRowsByParams(params) {
+  const receiptRows = getReceiptHistoryRows();
+  const receiptById = new Map(receiptRows.map(r => [r.id, r]));
+  const receiptByText = new Map(receiptRows.map(r => [normalizeText(`${r.receiptNo}|${r.patientName}`), r]));
+  const rows = [];
+  const payerFilter = normalizeText(params.payer || '');
+
+  function pushRecovered({ key, source, receipt, receiptNo, patientName, age, amountAdvance, amountRecovered, payDateISO, payer, note, sourceRank }) {
+    if (!payDateISO || payDateISO < params.from || payDateISO > params.to) return;
+    if (params.source !== 'all' && params.source !== source) return;
+    if (payerFilter && normalizeText(payer) !== payerFilter) return;
+    const finalReceipt = receipt || receiptByText.get(normalizeText(`${receiptNo || ''}|${patientName || ''}`)) || {};
+    const row = {
+      key: key || `${sourceRank || 0}|${receiptNo || finalReceipt.receiptNo || ''}|${patientName || finalReceipt.patientName || ''}|${payDateISO}|${amountRecovered}`,
+      source,
+      receiptNo: receiptNo || finalReceipt.receiptNo || '',
+      receiptDate: finalReceipt.date || '',
+      patientName: patientName || finalReceipt.patientName || '',
+      age: age || finalReceipt.age || '',
+      amountAdvance: Number(amountAdvance || finalReceipt.amount || amountRecovered || 0),
+      amountRecovered: Number(amountRecovered || 0),
+      payDateISO,
+      payDate: formatDisplayDate(payDateISO),
+      payer: payer || '',
+      note: note || '',
+      sortKey: `${payDateISO}|${receiptNo || finalReceipt.receiptNo || ''}|${patientName || finalReceipt.patientName || ''}|${sourceRank || 0}`
+    };
+    if (params.keyword) {
+      const haystack = normalizeText([row.receiptNo, row.receiptDate, row.patientName, row.age, row.payer, row.note].join(' '));
+      if (!haystack.includes(params.keyword)) return;
+    }
+    rows.push(row);
+  }
+
+  const validReportStatuses = new Set(['finalized', 'submitted', 'confirmed', 'locked', 'completed']);
+  getReports()
+    .filter(r => validReportStatuses.has(r.status))
+    .forEach(report => {
+      const reportDate = report.reportDateISO || (report.submittedAt || report.confirmedAt || report.updatedAt || report.createdAt || '').slice(0, 10);
+      (report.selectedRefundRowIds || []).forEach(id => {
+        const receipt = receiptById.get(id);
+        if (!receipt) return;
+        pushRecovered({
+          key: `report|${report.id}|${id}`,
+          source: 'report',
+          receipt,
+          amountRecovered: Number(receipt.amount || 0),
+          payDateISO: reportDate,
+          payer: report.createdByName || '',
+          note: `Thu hồi theo báo cáo ${report.code || ''}`.trim(),
+          sourceRank: 1
+        });
+      });
+    });
+
+  getRefunds().forEach(refund => {
+    const receipt = receiptByText.get(normalizeText(`${refund.receiptNo}|${refund.patientName}`));
+    pushRecovered({
+      key: `manual|${refund.id}`,
+      source: 'manual',
+      receipt,
+      receiptNo: refund.receiptNo,
+      patientName: refund.patientName,
+      amountRecovered: Number(refund.amount || 0),
+      payDateISO: refund.refundDate,
+      payer: refund.createdByName || '',
+      note: refund.note || 'Nhập dòng trả tạm ứng',
+      sourceRank: 2
+    });
+  });
+
+  getLostCases()
+    .filter(item => ['completed', 'confirmed'].includes(item.status))
+    .forEach(item => {
+      const payDateISO = item.processDate || (item.completedAt || item.confirmedAt || item.updatedAt || item.createdAt || '').slice(0, 10);
+      const receipt = receiptById.get(item.receiptKey) || receiptByText.get(normalizeText(`${item.receiptNo}|${item.patientName}`));
+      pushRecovered({
+        key: `lost|${item.id}`,
+        source: 'lost',
+        receipt,
+        receiptNo: item.receiptNo,
+        patientName: item.patientName,
+        age: item.age,
+        amountAdvance: item.amount,
+        amountRecovered: Number(item.amount || 0),
+        payDateISO,
+        payer: item.createdByName || item.treasurerName || '',
+        note: `Xử lý mất phiếu ${item.code || ''}`.trim(),
+        sourceRank: 3
+      });
+    });
+
+  const unique = new Map();
+  rows.forEach(r => {
+    const k = `${r.key}|${r.payDateISO}|${r.amountRecovered}`;
+    if (!unique.has(k)) unique.set(k, r);
+  });
+  return Array.from(unique.values())
+    .sort((a, b) => String(a.sortKey).localeCompare(String(b.sortKey)) || String(a.patientName).localeCompare(String(b.patientName)));
+}
+
+function makeRecoveredParamsHtml(rows, params) {
+  const totalAdvance = rows.reduce((s, r) => s + Number(r.amountAdvance || 0), 0);
+  const totalRecovered = rows.reduce((s, r) => s + Number(r.amountRecovered || 0), 0);
+  const payerText = params.payer || 'Tất cả tài khoản';
+  const subtitle = `Từ ngày ${formatDisplayDate(params.from)} đến ngày ${formatDisplayDate(params.to)} | Người thu hồi: ${payerText} | Nguồn: ${recoveredSourceLabel(params.source)}`;
+  const body = rows.map((r, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(r.receiptNo)}</td><td>${escapeHtml(r.receiptDate)}</td><td>${escapeHtml(r.patientName)}</td><td>${escapeHtml(r.age)}</td><td style="text-align:right">${formatMoney(r.amountAdvance)}</td><td style="text-align:right">${formatMoney(r.amountRecovered)}</td><td>${escapeHtml(r.payDate)}</td><td>${escapeHtml(r.payer)}</td><td>${escapeHtml(r.note || '')}</td></tr>`).join('') || '<tr><td colspan="10">Không có dữ liệu phù hợp.</td></tr>';
+  const totalRow = rows.length ? `<tr class="print-total-row"><th colspan="5" style="text-align:right">Tổng cộng</th><th style="text-align:right">${formatMoney(totalAdvance)}</th><th style="text-align:right">${formatMoney(totalRecovered)}</th><th colspan="3"></th></tr>` : '';
+  return `${makePrintHeader('Báo cáo thu hồi tạm ứng', subtitle)}
+    <table class="cashbook-print-table"><thead><tr><th>STT</th><th>Số phiếu thu</th><th>Ngày thu</th><th>Họ tên bệnh nhân</th><th>Tuổi</th><th>Số tiền đã tạm ứng</th><th>Số tiền đã thu hồi</th><th>Ngày thu hồi</th><th>Người thu hồi</th><th>Ghi chú</th></tr></thead>
+      <tbody>${body}${totalRow}</tbody>
+    </table>
+    <div class="print-sign"><div><b>Người lập</b><br><br><br><br>${escapeHtml(currentUser?.fullName || '')}</div><div><b>Thủ quỹ</b><br><br><br><br></div></div>
+    </div>`;
+}
+
+function previewRecoveredByParams() {
+  const params = readRecoveredParams();
+  if (!params) return;
+  recoveredReceiptRows = collectRecoveredRowsByParams(params);
+  renderRecoveredReceiptsReport();
+  closeRecoveredParamsModal();
+  setActiveTab('tabTreasurer');
+  $('recoveredReceiptCard')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  showToast(recoveredReceiptRows.length ? `Đã lập danh sách ${recoveredReceiptRows.length} biên lai thu hồi.` : 'Không có dữ liệu phù hợp với tham số đã chọn.', recoveredReceiptRows.length ? '' : 'warn');
+}
+
+function printRecoveredByParams() {
+  const params = readRecoveredParams();
+  if (!params) return;
+  const rows = collectRecoveredRowsByParams(params);
+  if (!rows.length) return showToast('Không có dữ liệu phù hợp với tham số đã chọn.', 'warn');
+  closeRecoveredParamsModal();
+  printHtml(makeRecoveredParamsHtml(rows, params));
+}
+
 function numericReceiptNo(value) {
   const raw = String(value ?? '').replace(/\D/g, '');
   if (!raw) return null;
@@ -2562,6 +2804,61 @@ function applyReportPrintPeriod(report) {
   };
 }
 
+function makeSelectedRecoveredSectionHtml(report) {
+  const rows = getSelectedRecoveredRowsForReport(report);
+  if (!rows.length) return '';
+  const total = rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const body = rows.map((row, index) => `<tr><td class="center">${index + 1}</td><td>${escapeHtml(row.receiptNo)}</td><td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.patientName)}</td><td>${escapeHtml(row.age)}</td><td style="text-align:right">${formatMoney(row.amount)}</td><td>${escapeHtml(row.recoveredDate)}</td><td>${escapeHtml(row.recoveredBy)}</td></tr>`).join('');
+  return `<h3>III. Danh sách biên lai đã thu hồi tạm ứng</h3>
+    <table class="print-table"><thead><tr><th>STT</th><th>Số phiếu thu</th><th>Ngày thu</th><th>Họ tên bệnh nhân</th><th>Tuổi</th><th>Số tiền thu hồi</th><th>Ngày thu hồi</th><th>Người thu hồi</th></tr></thead>
+    <tbody>${body}</tbody><tfoot><tr><th colspan="5" style="text-align:right">Tổng cộng</th><th style="text-align:right">${formatMoney(total)}</th><th colspan="2"></th></tr></tfoot></table>`;
+}
+
+
+function makeRecoveredReportHtmlFromRows(rows, title, subtitle, signerName = '') {
+  const totalAdvance = rows.reduce((sum, row) => sum + Number(row.amount || row.amountAdvance || 0), 0);
+  const totalRecovered = rows.reduce((sum, row) => sum + Number(row.amount || row.amountRecovered || 0), 0);
+  const body = rows.map((row, index) => `
+    <tr>
+      <td class="center">${index + 1}</td>
+      <td>${escapeHtml(row.receiptNo || '')}</td>
+      <td>${escapeHtml(row.date || row.receiptDate || '')}</td>
+      <td>${escapeHtml(row.patientName || '')}</td>
+      <td>${escapeHtml(row.age || '')}</td>
+      <td style="text-align:right">${formatMoney(row.amount || row.amountAdvance || 0)}</td>
+      <td style="text-align:right">${formatMoney(row.amount || row.amountRecovered || 0)}</td>
+      <td>${escapeHtml(row.recoveredDate || row.payDate || '')}</td>
+      <td>${escapeHtml(row.recoveredBy || row.payer || '')}</td>
+    </tr>`).join('') || '<tr><td colspan="9">Không có dữ liệu.</td></tr>';
+  const totalRow = rows.length ? `<tr class="print-total-row"><th colspan="5" style="text-align:right">Tổng cộng</th><th style="text-align:right">${formatMoney(totalAdvance)}</th><th style="text-align:right">${formatMoney(totalRecovered)}</th><th colspan="2"></th></tr>` : '';
+  return `${makePrintHeader(title, subtitle)}
+    <table class="cashbook-print-table"><thead><tr><th>STT</th><th>Số phiếu thu</th><th>Ngày thu</th><th>Họ tên bệnh nhân</th><th>Tuổi</th><th>Số tiền đã tạm ứng</th><th>Số tiền đã thu hồi</th><th>Ngày thu hồi</th><th>Người thu hồi</th></tr></thead>
+      <tbody>${body}${totalRow}</tbody>
+    </table>
+    <div class="print-sign"><div><b>Người lập</b><br><br><br><br>${escapeHtml(signerName || '')}</div><div><b>Thủ quỹ</b><br><br><br><br></div></div>
+    </div>`;
+}
+
+function printCurrentRecoveredReport() {
+  const report = scopeReportForCurrentUser(buildReportObject(currentReport.status || 'draft'));
+  const rows = getSelectedRecoveredRowsForReport(report);
+  if (!rows.length) return showToast('Báo cáo hiện tại chưa có biên lai thu hồi tạm ứng để in.', 'warn');
+  const reportDate = report.reportDate || formatPrintDate(report.reportDateISO || todayISO());
+  printHtml(makeRecoveredReportHtmlFromRows(rows, 'Danh sách biên lai đã thu hồi tạm ứng', `Mã báo cáo: ${escapeHtml(report.code || 'Chưa chốt')} - Ngày báo cáo: ${escapeHtml(reportDate)}`, report.createdByName || currentUser?.fullName || ''));
+}
+
+function printRecoveredReportById(id) {
+  const savedReport = getReports().find(r => r.id === id);
+  if (!savedReport || !canViewReport(savedReport)) return showToast('Không tìm thấy báo cáo.', 'error');
+  const report = scopeReportForCurrentUser(savedReport);
+  const rows = getSelectedRecoveredRowsForReport(report);
+  if (!rows.length) return showToast('Báo cáo này không có biên lai thu hồi tạm ứng để in.', 'warn');
+  const reportDate = report.reportDate || formatPrintDate(report.reportDateISO || '');
+  printHtml(makeRecoveredReportHtmlFromRows(rows, 'Danh sách biên lai đã thu hồi tạm ứng', `Mã báo cáo: ${escapeHtml(report.code || '')} - Ngày báo cáo: ${escapeHtml(reportDate)}`, report.createdByName || ''));
+}
+
+window.printRecoveredReportById = printRecoveredReportById;
+
 function makeReportHtml(report) {
   report = applyReportPrintPeriod(report);
   const advRows = report.advanceRows || [];
@@ -2571,7 +2868,8 @@ function makeReportHtml(report) {
   const advBody = advRows.map((r, i) => `<tr><td class="center">${i + 1}</td><td class="nowrap">${escapeHtml(r.date)}</td><td class="nowrap">${escapeHtml(r.receiptNo)}</td><td>${escapeHtml(r.patientName)}</td><td class="nowrap">${escapeHtml(r.age)}</td><td class="nowrap">${escapeHtml(r.gender)}</td><td>${escapeHtml(r.department)}</td><td class="money nowrap">${formatMoney(r.amount)}</td><td>${escapeHtml(r.collector)}</td></tr>`).join('') || '<tr><td colspan="9">Không có dữ liệu.</td></tr>';
   const invBody = invRows.map((r, i) => `<tr><td class="center">${i + 1}</td><td class="nowrap">${escapeHtml(r.paymentDate)}</td><td class="nowrap">${escapeHtml(r.invoiceNo)}</td><td>${escapeHtml(r.patientName)}</td><td class="money nowrap">${formatMoney(r.amount)}</td><td>${escapeHtml(r.issuer)}</td></tr>`).join('') || '<tr><td colspan="6">Không có dữ liệu.</td></tr>';
 
-  return `${makePrintHeader('Báo cáo nộp tạm ứng viện phí và phát hành hóa đơn điện tử', `Từ ngày ${escapeHtml(report.dateFrom || '')} đến ngày ${escapeHtml(report.dateTo || '')}`)}
+  const reportSubtitle = report.dateFrom || report.dateTo ? `Từ ngày ${escapeHtml(report.dateFrom || '')} đến ngày ${escapeHtml(report.dateTo || '')}` : `Ngày báo cáo: ${escapeHtml(report.reportDate || formatPrintDate(report.reportDateISO || ''))}`;
+  return `${makePrintHeader('Báo cáo nộp tạm ứng viện phí và phát hành hóa đơn điện tử', reportSubtitle)}
     <p><b>Người lập:</b> ${escapeHtml(report.createdByName)} &nbsp; <b>Mã báo cáo:</b> ${escapeHtml(report.code)} &nbsp; <b>Ngày báo cáo:</b> ${escapeHtml(report.reportDate || formatPrintDate(report.reportDateISO || ''))} &nbsp; <b>Trạng thái:</b> ${escapeHtml(statusLabel(report.status))}</p>
     <h3>I. Thu tạm ứng viện phí</h3>
     <table class="print-table print-advance-table"><colgroup><col style="width:4%"><col style="width:9%"><col style="width:8%"><col style="width:18%"><col style="width:7%"><col style="width:6%"><col style="width:20%"><col style="width:10%"><col style="width:18%"></colgroup><thead><tr><th>STT</th><th>Ngày thu</th><th>Phiếu thu</th><th>Họ tên</th><th>Tuổi</th><th>Giới tính</th><th>Khoa/phòng</th><th>Số tiền</th><th>Người thu</th></tr></thead>
@@ -2581,6 +2879,7 @@ function makeReportHtml(report) {
     <table class="print-table print-invoice-table"><colgroup><col style="width:6%"><col style="width:14%"><col style="width:14%"><col style="width:30%"><col style="width:15%"><col style="width:21%"></colgroup><thead><tr><th>STT</th><th>Ngày thanh toán</th><th>Số HĐĐT</th><th>Tên bệnh nhân</th><th>Số tiền</th><th>Người phát hành</th></tr></thead>
       <tbody>${invBody}</tbody>
       <tfoot><tr><th colspan="4" style="text-align:right">Tổng cộng</th><th style="text-align:right">${formatMoney(sumInv)}</th><th></th></tr></tfoot></table>
+    ${makeSelectedRecoveredSectionHtml(report)}
     <h3>III. Tổng hợp</h3>
     <table class="print-summary"><tbody>${reportSummaryRows(report).map(([label, value]) => `<tr><td>${escapeHtml(label)}</td><td style="text-align:right"><b>${formatMoney(value)}</b></td></tr>`).join('')}</tbody></table>
     <p><b>Ghi chú:</b> ${escapeHtml([report.note || '', makeLostReceiptNote(report)].filter(Boolean).join(' | '))}</p>
@@ -2712,14 +3011,10 @@ function makeWorkingReportForPeriod(fromISO, toISO, reportDateISO = todayISO()) 
 }
 
 function makeWorkingReportForDate(reportDateISO = todayISO()) {
-  // Tạo báo cáo mới: chỉ chọn ngày báo cáo, còn dữ liệu lấy TẤT CẢ thông tin đã lưu trên hệ thống.
-  const advanceRows = collectSystemAdvanceRows()
-    .filter(row => reportRowMatchesCurrentUser(row, 'collector'))
-    .sort((a, b) => String(a.dateISO || parseDateToISO(a.date)).localeCompare(String(b.dateISO || parseDateToISO(b.date))) || String(a.receiptNo || '').localeCompare(String(b.receiptNo || '')));
-
-  const invoiceRows = collectSystemInvoiceRows()
-    .filter(row => reportRowMatchesCurrentUser(row, 'issuer'))
-    .sort((a, b) => String(a.paymentDateISO || parseDateToISO(a.paymentDate)).localeCompare(String(b.paymentDateISO || parseDateToISO(b.paymentDate))) || String(a.invoiceNo || '').localeCompare(String(b.invoiceNo || '')));
+  // Tạo báo cáo mới: chỉ tạo khung báo cáo theo NGÀY BÁO CÁO.
+  // Các biên lai đã chốt trước đó chỉ lưu ngầm để tra cứu/thu hồi, KHÔNG tự đưa lại vào tổng thu tạm ứng của báo cáo mới.
+  const advanceRows = [];
+  const invoiceRows = [];
 
   const lostRows = collectCompletedLostCasesForCurrentUser(reportDateISO, reportDateISO);
   const lostReceiptAmount = lostRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
@@ -2783,7 +3078,7 @@ function openBuildReportPeriodModal() {
   const desc = $('periodModalDesc');
   const confirmBtn = $('btnConfirmPrintPeriod');
   if (title) title.textContent = 'Chọn ngày tạo báo cáo mới';
-  if (desc) desc.textContent = 'Chỉ chọn ngày báo cáo. Dữ liệu lập báo cáo sẽ lấy toàn bộ thông tin đã lưu trên hệ thống theo tài khoản đang làm việc.';
+  if (desc) desc.textContent = 'Chỉ chọn ngày báo cáo. Biên lai đã chốt trước đó chỉ dùng để tra cứu/thu hồi, không tự đưa lại vào tổng thu tạm ứng.';
   if (confirmBtn) confirmBtn.textContent = 'Tạo báo cáo mới';
   $('printPeriodModal').classList.remove('hidden');
   setTimeout(() => reportDateEl?.focus(), 50);
@@ -2815,18 +3110,20 @@ function openPreviewPeriodModal(report) {
   pendingPrintReport = null;
   const fromEl = $('printDateFrom');
   const toEl = $('printDateTo');
+  const reportDateEl = $('periodReportDate');
   const reportDateBox = $('periodReportDateBox');
-  if (reportDateBox) reportDateBox.classList.add('hidden');
-  if (fromEl) { fromEl.parentElement?.classList.remove('hidden'); fromEl.value = toDateInputValue(report.dateFrom); }
-  if (toEl) { toEl.parentElement?.classList.remove('hidden'); toEl.value = toDateInputValue(report.dateTo); }
+  if (fromEl) { fromEl.value = ''; fromEl.parentElement?.classList.add('hidden'); }
+  if (toEl) { toEl.value = ''; toEl.parentElement?.classList.add('hidden'); }
+  if (reportDateEl) reportDateEl.value = report.reportDateISO || todayISO();
+  if (reportDateBox) reportDateBox.classList.remove('hidden');
   const title = $('periodModalTitle');
   const desc = $('periodModalDesc');
   const confirmBtn = $('btnConfirmPrintPeriod');
-  if (title) title.textContent = 'Chọn thời gian xem trước báo cáo';
-  if (desc) desc.textContent = 'Báo cáo xem trước sẽ lọc dữ liệu theo khoảng thời gian và tài khoản đang làm việc.';
+  if (title) title.textContent = 'Chọn ngày báo cáo đã lập';
+  if (desc) desc.textContent = 'Chỉ chọn ngày báo cáo. Dữ liệu hiển thị theo các dòng đang có trong báo cáo và các biên lai thu hồi đã chọn.';
   if (confirmBtn) confirmBtn.textContent = 'Xem trước';
   $('printPeriodModal').classList.remove('hidden');
-  setTimeout(() => fromEl?.focus(), 50);
+  setTimeout(() => reportDateEl?.focus(), 50);
 }
 
 function closePrintPeriodModal() {
@@ -2853,22 +3150,25 @@ function confirmPrintPeriodAndPrint() {
     return;
   }
 
-  if (!from || !to) return showToast('Nhập đủ từ ngày và đến ngày.', 'error');
-  if (from > to) return showToast('Từ ngày không được lớn hơn đến ngày.', 'error');
-
   if (periodModalMode === 'preview') {
-    const base = reportHasWorkingData(currentReport) ? scopeReportForCurrentUser(buildReportObject(currentReport.status || 'draft')) : makeWorkingReportForPeriod(from, to, currentReport.reportDateISO || todayISO());
+    const reportDate = $('periodReportDate')?.value || currentReport.reportDateISO || todayISO();
+    const base = reportHasWorkingData(currentReport) ? scopeReportForCurrentUser(buildReportObject(currentReport.status || 'draft')) : makeWorkingReportForDate(reportDate);
     const report = {
       ...base,
-      printDateFromISO: from,
-      printDateToISO: to,
-      dateFrom: formatPrintDate(from),
-      dateTo: formatPrintDate(to)
+      reportDateISO: reportDate,
+      reportDate: formatPrintDate(reportDate),
+      printDateFromISO: '',
+      printDateToISO: '',
+      dateFrom: '',
+      dateTo: ''
     };
     closePrintPeriodModal();
     previewHtml(makeReportHtml(report));
     return;
   }
+
+  if (!from || !to) return showToast('Nhập đủ từ ngày và đến ngày.', 'error');
+  if (from > to) return showToast('Từ ngày không được lớn hơn đến ngày.', 'error');
 
   if (!pendingPrintReport) return closePrintPeriodModal();
   const report = {
@@ -2954,7 +3254,7 @@ function makeRecoveredReceiptsHtml() {
   const totalRecovered = recoveredReceiptRows.reduce((s, r) => s + Number(r.amountRecovered || 0), 0);
   const body = recoveredReceiptRows.map(r => `<tr><td>${escapeHtml(r.receiptNo)}</td><td>${escapeHtml(r.receiptDate)}</td><td>${escapeHtml(r.patientName)}</td><td>${escapeHtml(r.age)}</td><td style="text-align:right">${formatMoney(r.amountAdvance)}</td><td style="text-align:right">${formatMoney(r.amountRecovered)}</td><td>${escapeHtml(r.payDate)}</td><td>${escapeHtml(r.payer)}</td><td>${escapeHtml(r.note || '')}</td></tr>`).join('') || '<tr><td colspan="9">Không có dữ liệu.</td></tr>';
   const totalRow = `<tr class="print-total-row"><th colspan="4" style="text-align:right">Tổng cộng</th><th style="text-align:right">${formatMoney(totalAdvance)}</th><th style="text-align:right">${formatMoney(totalRecovered)}</th><th colspan="3"></th></tr>`;
-  return `${makePrintHeader('Danh sách biên lai đã thu hồi tạm ứng', `Từ ngày ${escapeHtml(from)} đến ngày ${escapeHtml(to)}`)}
+  return `${makePrintHeader('Danh sách biên lai đã thu hồi tạm ứng', `Ngày báo cáo: ${escapeHtml(formatPrintDate(to))}`)}
     <table class="cashbook-print-table"><thead><tr><th>Số phiếu thu</th><th>Ngày thu</th><th>Họ tên bệnh nhân</th><th>Tuổi</th><th>Số tiền đã tạm ứng</th><th>Số tiền đã thu hồi</th><th>Ngày thu hồi</th><th>Người thu hồi</th><th>Ghi chú</th></tr></thead>
       <tbody>${body}${recoveredReceiptRows.length ? totalRow : ''}</tbody>
     </table>
@@ -3062,6 +3362,7 @@ function bindEvents() {
   $('btnBuildReport').addEventListener('click', startNewReport);
   $('btnFinalizeReport').addEventListener('click', finalizeCurrentReport);
   $('btnPreviewReport').addEventListener('click', previewCurrentReport);
+  if ($('btnPrintCurrentRecovered')) $('btnPrintCurrentRecovered').addEventListener('click', printCurrentRecoveredReport);
   $('btnSubmitReport').addEventListener('click', () => { if (saveCurrentReport('submitted')) { reportInputEnabled = false; applyRoleControls(); } });
 
   $('btnReloadReports').addEventListener('click', renderMyReports);
@@ -3100,6 +3401,12 @@ function bindEvents() {
   $('btnBuildCashbook').addEventListener('click', buildCashbook);
   if ($('btnBuildRecoveredReceipts')) $('btnBuildRecoveredReceipts').addEventListener('click', buildRecoveredReceiptsReport);
   if ($('btnPrintRecoveredReceipts')) $('btnPrintRecoveredReceipts').addEventListener('click', () => { if (!recoveredReceiptRows.length) buildRecoveredReceiptsReport(); if (recoveredReceiptRows.length) printHtml(makeRecoveredReceiptsHtml()); });
+  if ($('btnOpenRecoveredParams')) $('btnOpenRecoveredParams').addEventListener('click', openRecoveredParamsModal);
+  if ($('btnCloseRecoveredParams')) $('btnCloseRecoveredParams').addEventListener('click', closeRecoveredParamsModal);
+  if ($('btnCancelRecoveredParams')) $('btnCancelRecoveredParams').addEventListener('click', closeRecoveredParamsModal);
+  if ($('btnPreviewRecoveredParams')) $('btnPreviewRecoveredParams').addEventListener('click', previewRecoveredByParams);
+  if ($('btnPrintRecoveredParams')) $('btnPrintRecoveredParams').addEventListener('click', printRecoveredByParams);
+  if ($('recoveredParamsModal')) $('recoveredParamsModal').addEventListener('click', e => { if (e.target.id === 'recoveredParamsModal') closeRecoveredParamsModal(); });
   $('btnPrintCashbook').addEventListener('click', () => { if (!cashbookRows.length) buildCashbook(); printHtml(makeCashbookHtml()); });
   $('btnExportCashbook').addEventListener('click', () => { if (!cashbookRows.length) buildCashbook(); exportCashbookCsv(); });
   if ($('btnListProblemReceipts')) $('btnListProblemReceipts').addEventListener('click', listProblemReceipts);

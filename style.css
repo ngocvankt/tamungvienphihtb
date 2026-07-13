@@ -949,3 +949,9 @@ input, select, textarea {
   border-color: #0b8f43;
   box-shadow: 0 0 0 3px rgba(11, 143, 67, 0.12);
 }
+
+.recovered-params-card { max-width: 820px; }
+.form-span-two { grid-column: 1 / -1; }
+@media (max-width: 720px) {
+  .form-span-two { grid-column: auto; }
+}
