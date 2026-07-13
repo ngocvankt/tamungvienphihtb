@@ -28,6 +28,12 @@ const FIREBASE_SYNC_KEYS = [
   APP.settings
 ];
 
+const FIREBASE_CORE_KEYS = [APP.users, APP.settings];
+const FIREBASE_TEST_KEYS = [APP.reports, APP.advances, APP.invoices, APP.lostCases, APP.refunds];
+const FIREBASE_CLEAR_MARKER_KEY = 'tuvp_last_clear_test_v1';
+const FIREBASE_BUSINESS_MARKER_KEY = '_businessDataAfterClearAt';
+const APP_VERSION = 'v42';
+
 let firebaseSyncReady = false;
 let firebaseSyncDisabled = false;
 
@@ -87,21 +93,79 @@ function firebaseRef(path = '') {
   return window.firebaseDb.ref(path ? `${FIREBASE_ROOT}/${path}` : FIREBASE_ROOT);
 }
 
+
+function clearLocalBusinessData() {
+  FIREBASE_TEST_KEYS.forEach(key => localStorage.removeItem(key));
+  // Dọn thêm các key cũ/nháp nếu các bản trước từng sinh ra. Giữ tài khoản/cấu hình/phiên đăng nhập.
+  Object.keys(localStorage).forEach(key => {
+    if (/^(tuvp_reports|tuvp_advances|tuvp_invoices|tuvp_lost_cases|tuvp_refunds|tuvp_problem|tuvp_cashbook|tuvp_receipt|tuvp_recovered)/.test(key)) {
+      localStorage.removeItem(key);
+    }
+  });
+}
+
+function getCorePayloadForFirebase(extra = {}) {
+  const payload = { ...extra };
+  FIREBASE_CORE_KEYS.forEach(key => {
+    const raw = localStorage.getItem(key);
+    if (raw !== null) {
+      try { payload[key] = JSON.parse(raw); }
+      catch { /* bỏ qua dữ liệu lỗi */ }
+    }
+  });
+  return sanitizeForFirebase(payload);
+}
+
 async function pullAllFromFirebase() {
   if (!firebaseAvailable()) return false;
   try {
     const snap = await firebaseRef().once('value');
     const data = snap.val();
+
+    // Firebase là nguồn chính. Nếu Firebase chưa có nhánh dữ liệu hoặc vừa bị xóa,
+    // tuyệt đối không được để dữ liệu test cũ trong localStorage tự hồi sinh lên cloud.
     if (!data || typeof data !== 'object') {
+      clearLocalBusinessData();
       firebaseSyncReady = true;
       return false;
     }
 
+    const remoteClearAt = Number(data._lastClearTestDataAt || 0);
+    const localClearAt = Number(localStorage.getItem(FIREBASE_CLEAR_MARKER_KEY) || 0);
+    const businessAfterClearAt = Number(data[FIREBASE_BUSINESS_MARKER_KEY] || 0);
+    const hasFreshBusinessAfterClear = !remoteClearAt || businessAfterClearAt > remoteClearAt;
+
+    if (remoteClearAt && remoteClearAt >= localClearAt) {
+      clearLocalBusinessData();
+      localStorage.setItem(FIREBASE_CLEAR_MARKER_KEY, String(remoteClearAt));
+    }
+
+    const staleBusinessKeys = remoteClearAt && !hasFreshBusinessAfterClear;
+    const staleCleanupPayload = {};
+
     FIREBASE_SYNC_KEYS.forEach(key => {
+      const isBusinessKey = FIREBASE_TEST_KEYS.includes(key);
+
+      if (isBusinessKey && staleBusinessKeys) {
+        // Nếu Firebase còn sót nhánh nghiệp vụ cũ sau khi đã xóa test thì tuyệt đối không import về local.
+        // Đồng thời đánh dấu xóa lại trên cloud để lần refresh sau không hồi sinh dữ liệu.
+        localStorage.removeItem(key);
+        if (Object.prototype.hasOwnProperty.call(data, key)) staleCleanupPayload[key] = null;
+        return;
+      }
+
       if (Object.prototype.hasOwnProperty.call(data, key)) {
         localStorage.setItem(key, JSON.stringify(data[key]));
+      } else if (isBusinessKey) {
+        // Nếu một nhánh dữ liệu nghiệp vụ đã bị xóa trên Firebase thì xóa luôn bản local.
+        localStorage.removeItem(key);
       }
+      // Với users/settings: nếu cloud chưa có thì giữ local để có thể seed tài khoản/cấu hình.
     });
+
+    if (Object.keys(staleCleanupPayload).length) {
+      firebaseRef().update(staleCleanupPayload).catch(err => console.warn('Không dọn được nhánh nghiệp vụ cũ:', err));
+    }
 
     firebaseSyncReady = true;
     return true;
@@ -115,13 +179,21 @@ async function pullAllFromFirebase() {
 async function pushAllToFirebase() {
   if (!firebaseAvailable()) return false;
   const payload = {};
+  let hasBusinessData = false;
   FIREBASE_SYNC_KEYS.forEach(key => {
     const raw = localStorage.getItem(key);
     if (raw !== null) {
-      try { payload[key] = JSON.parse(raw); }
+      try {
+        const parsed = JSON.parse(raw);
+        payload[key] = parsed;
+        if (FIREBASE_TEST_KEYS.includes(key)) {
+          if (Array.isArray(parsed) ? parsed.length : parsed && Object.keys(parsed).length) hasBusinessData = true;
+        }
+      }
       catch { /* bỏ qua dữ liệu lỗi */ }
     }
   });
+  if (hasBusinessData) payload[FIREBASE_BUSINESS_MARKER_KEY] = Date.now();
   try {
     await firebaseRef().update(sanitizeForFirebase(payload));
     firebaseSyncReady = true;
@@ -132,14 +204,37 @@ async function pushAllToFirebase() {
   }
 }
 
+async function pushCoreDataToFirebase() {
+  if (!firebaseAvailable()) return false;
+  const payload = {};
+  FIREBASE_CORE_KEYS.forEach(key => {
+    const raw = localStorage.getItem(key);
+    if (raw !== null) {
+      try { payload[key] = JSON.parse(raw); }
+      catch { /* bỏ qua dữ liệu lỗi */ }
+    }
+  });
+  try {
+    await firebaseRef().update(sanitizeForFirebase(payload));
+    return true;
+  } catch (err) {
+    console.warn('Không đẩy được tài khoản/cấu hình lên Firebase:', err);
+    return false;
+  }
+}
+
+
 function saveJson(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
 
   // Session chỉ lưu trong trình duyệt, không đồng bộ lên Firebase.
   if (!FIREBASE_SYNC_KEYS.includes(key) || !firebaseAvailable()) return;
 
-  firebaseRef(key)
-    .set(sanitizeForFirebase(value))
+  const updates = { [key]: sanitizeForFirebase(value) };
+  if (FIREBASE_TEST_KEYS.includes(key)) updates[FIREBASE_BUSINESS_MARKER_KEY] = Date.now();
+
+  firebaseRef()
+    .update(updates)
     .catch(err => console.warn(`Không đồng bộ được ${key} lên Firebase:`, err));
 }
 
@@ -2691,16 +2786,72 @@ function saveSettings() {
   showToast('Đã lưu cấu hình.');
 }
 
-function clearTestData() {
-  if (!confirm('Xóa toàn bộ dữ liệu báo cáo/hồ sơ test? Tài khoản vẫn giữ lại.')) return;
-  [APP.reports, APP.advances, APP.invoices, APP.lostCases, APP.refunds].forEach(k => localStorage.removeItem(k));
-  resetReport();
-  selectedReceipt = null;
-  currentLostCaseId = null;
-  lostImagesBase64 = [];
-  renderSelectedReceipt();
-  refreshAll();
-  showToast('Đã xóa dữ liệu test.');
+async function clearTestData() {
+  if (!confirm('Xóa toàn bộ dữ liệu báo cáo/hồ sơ test? Tài khoản và cấu hình vẫn giữ lại.')) return;
+
+  const btn = $('btnClearTestData');
+  const oldText = btn ? btn.textContent : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Đang xóa...';
+  }
+
+  const clearAt = Date.now();
+
+  try {
+    // Khóa đồng bộ tạm thời trong lúc xóa để tránh render/reset đẩy dữ liệu cũ ngược lên Firebase.
+    const oldSyncState = firebaseSyncDisabled;
+    firebaseSyncDisabled = true;
+
+    // Xóa sạch dữ liệu nghiệp vụ trên máy hiện tại.
+    clearLocalBusinessData();
+    localStorage.setItem(FIREBASE_CLEAR_MARKER_KEY, String(clearAt));
+
+    // Ghi đè toàn bộ nhánh app trên Firebase bằng dữ liệu lõi.
+    // Cách set() này dứt điểm hơn update(null), tránh các nhánh phiếu thu cũ còn sót và tự hồi sinh khi reload.
+    firebaseSyncDisabled = oldSyncState;
+    if (firebaseAvailable()) {
+      const payload = getCorePayloadForFirebase({
+        _lastClearTestDataAt: clearAt,
+        [FIREBASE_BUSINESS_MARKER_KEY]: 0,
+        _lastClearBy: currentUser?.fullName || currentUser?.username || '',
+        _appVersion: APP_VERSION
+      });
+      await firebaseRef().set(payload);
+      // Dọn thêm các nhánh nghiệp vụ theo multi-path để xử lý trường hợp Firebase/Vercel dùng lại dữ liệu cũ.
+      const cleanupUpdates = {};
+      FIREBASE_TEST_KEYS.forEach(key => cleanupUpdates[key] = null);
+      cleanupUpdates[FIREBASE_BUSINESS_MARKER_KEY] = 0;
+      cleanupUpdates._lastClearTestDataAt = clearAt;
+      await firebaseRef().update(cleanupUpdates);
+    }
+
+    // Đọc lại từ Firebase để ép localStorage đồng bộ với trạng thái vừa xóa.
+    await pullAllFromFirebase();
+
+    resetReport(true);
+    selectedReceipt = null;
+    currentLostCaseId = null;
+    lostImagesBase64 = [];
+    cashbookRows = [];
+    recoveredReceiptRows = [];
+    problemReceiptRows = [];
+    receiptHistorySelected = new Set();
+    lostReceiptHistorySelected = new Set();
+    if ($('lostImages')) $('lostImages').value = '';
+    renderSelectedReceipt();
+    renderLostImagePreview();
+    refreshAll();
+    showToast('Đã xóa dữ liệu test trên hệ thống.');
+  } catch (err) {
+    console.error('Lỗi xóa dữ liệu test:', err);
+    showToast('Không xóa được dữ liệu test trên Firebase. Kiểm tra Rules/kết nối mạng.', 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = oldText || 'Xóa dữ liệu test';
+    }
+  }
 }
 
 
@@ -3429,13 +3580,11 @@ function bindEvents() {
 async function boot() {
   bindEvents();
 
-  // Nếu có Firebase thì kéo dữ liệu cloud xuống trước, rồi mới dựng dữ liệu mặc định.
-  // Nếu không có mạng/rules chưa đúng, phần mềm vẫn chạy localStorage như trước.
+  // Firebase là nguồn dữ liệu chính. Khi Firebase trống hoặc vừa xóa dữ liệu test,
+  // chỉ seed tài khoản/cấu hình, không tự đẩy lại báo cáo/phiếu thu cũ từ localStorage.
   await pullAllFromFirebase();
   ensureDefaultData();
-
-  // Nếu Firebase đang trống, đẩy dữ liệu mặc định/local hiện có lên để khởi tạo kho dữ liệu.
-  if (firebaseAvailable()) pushAllToFirebase();
+  if (firebaseAvailable()) pushCoreDataToFirebase();
 
   currentUser = readSession();
   if (currentUser) showApp(); else showLogin();
