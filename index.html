@@ -263,10 +263,20 @@
               <button id="btnBuildCashbook" class="btn primary">Lập báo cáo</button>
               <button id="btnPrintCashbook" class="btn">In</button>
               <button id="btnExportCashbook" class="btn">Xuất Excel/CSV</button>
+              <button id="btnBuildRecoveredReceipts" class="btn">DS biên lai đã thu hồi</button>
+              <button id="btnPrintRecoveredReceipts" class="btn">In DS thu hồi</button>
               <button id="btnListProblemReceipts" class="btn danger">Liệt kê phiếu thu có vấn đề</button>
             </div>
           </div>
           <div class="table-wrap"><table id="cashbookTable"></table></div>
+        </div>
+
+        <div class="card" id="recoveredReceiptCard">
+          <div class="table-head">
+            <h3>Danh sách biên lai đã thu hồi tạm ứng</h3>
+            <div class="summary-line" id="recoveredReceiptSummary"></div>
+          </div>
+          <div class="table-wrap"><table id="recoveredReceiptTable"></table></div>
         </div>
 
         <div class="card" id="problemReceiptCard">

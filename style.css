@@ -932,3 +932,20 @@ input, select, textarea {
     page-break-inside: avoid;
   }
 }
+
+
+.inline-date-input {
+  width: 130px;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid #bcd8c8;
+  border-radius: 8px;
+  background: #fff;
+  font-weight: 600;
+  color: #0c4b28;
+}
+.inline-date-input:focus {
+  outline: none;
+  border-color: #0b8f43;
+  box-shadow: 0 0 0 3px rgba(11, 143, 67, 0.12);
+}
