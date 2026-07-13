@@ -58,6 +58,8 @@ function emptyReport() {
     invoiceRows: [],
     dateFrom: '',
     dateTo: '',
+    reportDateISO: '',
+    reportDate: '',
     refundAmount: 0,
     lostReceiptAmount: 0,
     cashFloat: 0,
@@ -1124,6 +1126,8 @@ function useReceiptHistoryTotal() {
     .reduce((s, r) => s + Number(r.amount || 0), 0);
   if (!total) return showToast('Chưa tích chọn biên lai thu hồi tạm ứng.', 'error');
   currentReport.selectedRefundRowIds = Array.from(receiptHistorySelected);
+  currentReport.reportDateISO = currentReport.reportDateISO || todayISO();
+  currentReport.reportDate = currentReport.reportDate || formatPrintDate(currentReport.reportDateISO);
   const lostAmount = parseMoney($('lostReceiptAmount').value);
   $('refundAmount').value = formatMoney(total + lostAmount);
   updateReportTotals();
@@ -1319,6 +1323,8 @@ function buildReportObject(status = 'draft') {
     createdByName: currentReport.createdByName || currentUser.fullName,
     createdAt: currentReport.createdAt || nowISO(),
     updatedAt: nowISO(),
+    reportDateISO: currentReport.reportDateISO || todayISO(),
+    reportDate: currentReport.reportDate || formatPrintDate(currentReport.reportDateISO || todayISO()),
     submittedAt: status === 'submitted' ? nowISO() : currentReport.submittedAt || null,
     sumAdvance,
     sumInvoice,
@@ -1355,7 +1361,7 @@ function saveCurrentReport(status = 'draft') {
 }
 
 function finalizeCurrentReport() {
-  if (!currentReport.advanceRows.length && !currentReport.invoiceRows.length) {
+  if (!reportHasWorkingData(currentReport)) {
     return showToast('Chưa có dữ liệu để chốt báo cáo.', 'warn');
   }
   if (saveCurrentReport('finalized')) {
@@ -1390,10 +1396,7 @@ function startNewReport() {
     const ok = confirm('Báo cáo hiện tại chưa chốt/gửi thủ quỹ. Tạo báo cáo mới sẽ xóa dữ liệu đang hiển thị trên màn hình. Vẫn tiếp tục?');
     if (!ok) return;
   }
-  reportInputEnabled = true;
-  resetReport(false);
-  applyRoleControls();
-  showToast('Đã tạo báo cáo mới. Có thể upload file HIS để lập báo cáo.');
+  openBuildReportPeriodModal();
 }
 
 function syncReportSourceData(report) {
@@ -1518,13 +1521,12 @@ function scopeReportForCurrentUser(report) {
     const key = advanceKey(row);
     return `${normalizeText(row.receiptNo)}|${normalizeText(row.patientName)}|${row.dateISO || row.date}|${rid}|${key}`;
   }));
-  const selectedRefundRowIds = (report.selectedRefundRowIds || []).filter(id => {
-    const row = getReceiptHistoryRows().find(r => r.id === id);
-    return !row || normalizeText(row.collector) === assigned;
-  });
+  // Biên lai thu hồi tạm ứng do người dùng đã tích chọn phải được giữ nguyên,
+  // không lọc theo người thu/tài khoản vì người xử lý có thể thu hồi phiếu của người khác.
+  const selectedRefundRowIds = report.selectedRefundRowIds || [];
   const sumAdvance = advanceRows.reduce((s, r) => s + Number(r.amount || 0), 0);
   const sumInvoice = invoiceRows.reduce((s, r) => s + Number(r.amount || 0), 0);
-  const refundAmount = amountFromSelectedRefundRows(selectedRefundRowIds, '', '');
+  const refundAmount = amountFromSelectedRefundRows(selectedRefundRowIds, '', '', report.reportDateISO || (report.createdAt || '').slice(0, 10));
   const scopedRefundAmount = refundAmount === null ? Number(report.refundAmount || 0) : refundAmount;
   const selectedLostCaseIds = (report.selectedLostCaseIds || []).filter(id => {
     const item = getLostCases().find(c => c.id === id);
@@ -1974,7 +1976,7 @@ function buildCashbook() {
   getReports()
     .filter(r => validReportStatuses.has(r.status))
     .forEach(report => {
-      const reportDate = (report.submittedAt || report.confirmedAt || report.updatedAt || report.createdAt || '').slice(0, 10);
+      const reportDate = report.reportDateISO || (report.submittedAt || report.confirmedAt || report.updatedAt || report.createdAt || '').slice(0, 10);
       if (to && reportDate && reportDate > to) return;
 
       (report.selectedRefundRowIds || []).forEach(key => {
@@ -2373,11 +2375,14 @@ function rowInPrintPeriod(rowDateISO, fromISO, toISO) {
   return true;
 }
 
-function amountFromSelectedRefundRows(selectedIds, fromISO, toISO) {
+function amountFromSelectedRefundRows(selectedIds, fromISO, toISO, reportDateISO = '') {
   if (!selectedIds || !selectedIds.length) return null;
+  // Thu hồi tạm ứng đi theo NGÀY BÁO CÁO, không đi theo ngày thu ban đầu của biên lai.
+  // Vì vậy khi in/lọc theo thời gian, nếu ngày báo cáo nằm trong khoảng thì lấy toàn bộ biên lai đã tích chọn.
+  if (reportDateISO && !rowInPrintPeriod(reportDateISO, fromISO, toISO)) return 0;
   const selected = new Set(selectedIds);
   return getReceiptHistoryRows()
-    .filter(r => selected.has(r.id) && rowInPrintPeriod(r.dateISO || parseDateToISO(r.date), fromISO, toISO))
+    .filter(r => selected.has(r.id))
     .reduce((s, r) => s + Number(r.amount || 0), 0);
 }
 
@@ -2396,7 +2401,7 @@ function applyReportPrintPeriod(report) {
   const invRows = (report.invoiceRows || []).filter(r => rowInPrintPeriod(r.paymentDateISO || parseDateToISO(r.paymentDate), fromISO, toISO));
   const sumAdvance = advRows.reduce((s, r) => s + Number(r.amount || 0), 0);
   const sumInvoice = invRows.reduce((s, r) => s + Number(r.amount || 0), 0);
-  const selectedRefundAmount = amountFromSelectedRefundRows(report.selectedRefundRowIds, fromISO, toISO);
+  const selectedRefundAmount = amountFromSelectedRefundRows(report.selectedRefundRowIds, fromISO, toISO, report.reportDateISO || (report.createdAt || '').slice(0, 10));
   const selectedLostAmount = amountFromSelectedLostCases(report.selectedLostCaseIds, fromISO, toISO);
   const lostReceiptAmount = selectedLostAmount === null ? Number(report.lostReceiptAmount || 0) : selectedLostAmount;
   const baseRefundAmount = selectedRefundAmount === null ? Number(report.refundAmount || 0) : selectedRefundAmount;
@@ -2428,7 +2433,7 @@ function makeReportHtml(report) {
   const invBody = invRows.map((r, i) => `<tr><td class="center">${i + 1}</td><td class="nowrap">${escapeHtml(r.paymentDate)}</td><td class="nowrap">${escapeHtml(r.invoiceNo)}</td><td>${escapeHtml(r.patientName)}</td><td class="money nowrap">${formatMoney(r.amount)}</td><td>${escapeHtml(r.issuer)}</td></tr>`).join('') || '<tr><td colspan="6">Không có dữ liệu.</td></tr>';
 
   return `${makePrintHeader('Báo cáo nộp tạm ứng viện phí và phát hành hóa đơn điện tử', `Từ ngày ${escapeHtml(report.dateFrom || '')} đến ngày ${escapeHtml(report.dateTo || '')}`)}
-    <p><b>Người lập:</b> ${escapeHtml(report.createdByName)} &nbsp; <b>Mã báo cáo:</b> ${escapeHtml(report.code)} &nbsp; <b>Trạng thái:</b> ${escapeHtml(statusLabel(report.status))}</p>
+    <p><b>Người lập:</b> ${escapeHtml(report.createdByName)} &nbsp; <b>Mã báo cáo:</b> ${escapeHtml(report.code)} &nbsp; <b>Ngày báo cáo:</b> ${escapeHtml(report.reportDate || formatPrintDate(report.reportDateISO || ''))} &nbsp; <b>Trạng thái:</b> ${escapeHtml(statusLabel(report.status))}</p>
     <h3>I. Thu tạm ứng viện phí</h3>
     <table class="print-table print-advance-table"><colgroup><col style="width:4%"><col style="width:9%"><col style="width:8%"><col style="width:18%"><col style="width:7%"><col style="width:6%"><col style="width:20%"><col style="width:10%"><col style="width:18%"></colgroup><thead><tr><th>STT</th><th>Ngày thu</th><th>Phiếu thu</th><th>Họ tên</th><th>Tuổi</th><th>Giới tính</th><th>Khoa/phòng</th><th>Số tiền</th><th>Người thu</th></tr></thead>
       <tbody>${advBody}</tbody>
@@ -2532,7 +2537,7 @@ function collectSystemInvoiceRows() {
   return Array.from(map.values());
 }
 
-function makeWorkingReportForPeriod(fromISO, toISO) {
+function makeWorkingReportForPeriod(fromISO, toISO, reportDateISO = todayISO()) {
   const advanceRows = collectSystemAdvanceRows()
     .filter(row => reportRowMatchesCurrentUser(row, 'collector'))
     .filter(row => rowInPrintPeriod(row.dateISO || parseDateToISO(row.date), fromISO, toISO))
@@ -2543,7 +2548,7 @@ function makeWorkingReportForPeriod(fromISO, toISO) {
     .filter(row => rowInPrintPeriod(row.paymentDateISO || parseDateToISO(row.paymentDate), fromISO, toISO))
     .sort((a, b) => String(a.paymentDateISO || parseDateToISO(a.paymentDate)).localeCompare(String(b.paymentDateISO || parseDateToISO(b.paymentDate))) || String(a.invoiceNo || '').localeCompare(String(b.invoiceNo || '')));
 
-  const lostRows = collectCompletedLostCasesForCurrentUser(fromISO, toISO);
+  const lostRows = collectCompletedLostCasesForCurrentUser(reportDateISO, reportDateISO);
   const lostReceiptAmount = lostRows.reduce((s, r) => s + Number(r.amount || 0), 0);
 
   return {
@@ -2558,16 +2563,18 @@ function makeWorkingReportForPeriod(fromISO, toISO) {
     createdByName: currentUser.fullName,
     dateFrom: formatPrintDate(fromISO),
     dateTo: formatPrintDate(toISO),
+    reportDateISO,
+    reportDate: formatPrintDate(reportDateISO),
     printDateFromISO: fromISO,
     printDateToISO: toISO
   };
 }
 
-function buildWorkingReportForPeriod(fromISO, toISO) {
+function buildWorkingReportForPeriod(fromISO, toISO, reportDateISO = todayISO()) {
   if (!fromISO || !toISO) return showToast('Chọn đủ từ ngày và đến ngày.', 'error');
   if (fromISO > toISO) return showToast('Từ ngày không được lớn hơn đến ngày.', 'error');
 
-  currentReport = makeWorkingReportForPeriod(fromISO, toISO);
+  currentReport = makeWorkingReportForPeriod(fromISO, toISO, reportDateISO);
   $('refundAmount').value = currentReport.refundAmount ? formatMoney(currentReport.refundAmount) : '';
   $('lostReceiptAmount').value = currentReport.lostReceiptAmount ? formatMoney(currentReport.lostReceiptAmount) : '';
   $('cashFloat').value = '';
@@ -2576,7 +2583,7 @@ function buildWorkingReportForPeriod(fromISO, toISO) {
   updateReportTotals();
   setActiveTab('tabReport');
 
-  const msg = `Đã tạo báo cáo mới từ ${formatPrintDate(fromISO)} đến ${formatPrintDate(toISO)}: ${currentReport.advanceRows.length} dòng tạm ứng, ${currentReport.invoiceRows.length} dòng HĐĐT, ${(currentReport.selectedLostCaseIds || []).length} hồ sơ mất phiếu.`;
+  const msg = `Đã tạo báo cáo mới ngày ${formatPrintDate(reportDateISO)} từ ${formatPrintDate(fromISO)} đến ${formatPrintDate(toISO)}: ${currentReport.advanceRows.length} dòng tạm ứng, ${currentReport.invoiceRows.length} dòng HĐĐT, ${(currentReport.selectedLostCaseIds || []).length} hồ sơ mất phiếu.`;
   showToast(msg, currentReport.advanceRows.length || currentReport.invoiceRows.length || currentReport.lostReceiptAmount ? '' : 'warn');
 }
 
@@ -2585,13 +2592,17 @@ function openBuildReportPeriodModal() {
   periodModalMode = 'build';
   const fromEl = $('printDateFrom');
   const toEl = $('printDateTo');
+  const reportDateEl = $('periodReportDate');
+  const reportDateBox = $('periodReportDateBox');
   if (fromEl) fromEl.value = currentReport.printDateFromISO || toDateInputValue(currentReport.dateFrom);
   if (toEl) toEl.value = currentReport.printDateToISO || toDateInputValue(currentReport.dateTo);
+  if (reportDateEl) reportDateEl.value = currentReport.reportDateISO || todayISO();
+  if (reportDateBox) reportDateBox.classList.remove('hidden');
   const title = $('periodModalTitle');
   const desc = $('periodModalDesc');
   const confirmBtn = $('btnConfirmPrintPeriod');
   if (title) title.textContent = 'Chọn thời gian tạo báo cáo mới';
-  if (desc) desc.textContent = 'Phần mềm sẽ lấy các dòng có ngày thu/ngày thanh toán phù hợp với khoảng thời gian và tài khoản đang làm việc.';
+  if (desc) desc.textContent = 'Chọn ngày báo cáo và khoảng thời gian lấy dữ liệu. Thu hồi tạm ứng sẽ tính theo ngày báo cáo.';
   if (confirmBtn) confirmBtn.textContent = 'Tạo báo cáo mới';
   $('printPeriodModal').classList.remove('hidden');
   setTimeout(() => fromEl?.focus(), 50);
@@ -2603,6 +2614,8 @@ function openPrintPeriodModal(report) {
   pendingPreviewReport = null;
   const fromEl = $('printDateFrom');
   const toEl = $('printDateTo');
+  const reportDateBox = $('periodReportDateBox');
+  if (reportDateBox) reportDateBox.classList.add('hidden');
   if (fromEl) fromEl.value = toDateInputValue(report.dateFrom);
   if (toEl) toEl.value = toDateInputValue(report.dateTo);
   const title = $('periodModalTitle');
@@ -2621,6 +2634,8 @@ function openPreviewPeriodModal(report) {
   pendingPrintReport = null;
   const fromEl = $('printDateFrom');
   const toEl = $('printDateTo');
+  const reportDateBox = $('periodReportDateBox');
+  if (reportDateBox) reportDateBox.classList.add('hidden');
   if (fromEl) fromEl.value = toDateInputValue(report.dateFrom);
   if (toEl) toEl.value = toDateInputValue(report.dateTo);
   const title = $('periodModalTitle');
@@ -2637,6 +2652,7 @@ function closePrintPeriodModal() {
   pendingPrintReport = null;
   pendingPreviewReport = null;
   periodModalMode = 'print';
+  $('periodReportDateBox')?.classList.add('hidden');
   $('printPeriodModal')?.classList.add('hidden');
 }
 
@@ -2647,13 +2663,17 @@ function confirmPrintPeriodAndPrint() {
   if (from > to) return showToast('Từ ngày không được lớn hơn đến ngày.', 'error');
 
   if (periodModalMode === 'build') {
+    const reportDate = $('periodReportDate')?.value || todayISO();
     closePrintPeriodModal();
-    buildWorkingReportForPeriod(from, to);
+    reportInputEnabled = true;
+    resetReport(true);
+    buildWorkingReportForPeriod(from, to, reportDate);
+    applyRoleControls();
     return;
   }
 
   if (periodModalMode === 'preview') {
-    const base = reportHasWorkingData(currentReport) ? scopeReportForCurrentUser(buildReportObject(currentReport.status || 'draft')) : makeWorkingReportForPeriod(from, to);
+    const base = reportHasWorkingData(currentReport) ? scopeReportForCurrentUser(buildReportObject(currentReport.status || 'draft')) : makeWorkingReportForPeriod(from, to, currentReport.reportDateISO || todayISO());
     const report = {
       ...base,
       printDateFromISO: from,
