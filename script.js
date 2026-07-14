@@ -1060,18 +1060,55 @@ function statusRank(status) {
   return ({ finalized: 1, submitted: 2, confirmed: 3, locked: 4, completed: 5 })[status] || 0;
 }
 
-function getReceiptHistoryRows() {
+function getClosedAdvanceReceiptIds(options = {}) {
+  // Biên lai đã thu hồi trong báo cáo đã chốt/gửi/xác nhận hoặc đã xử lý mất phiếu
+  // được xem là kết thúc vòng đời. Không cho chọn lại ở thu hồi tạm ứng hoặc xử lý mất phiếu.
+  const exceptReportId = options.exceptReportId || '';
+  const exceptLostCaseId = options.exceptLostCaseId || '';
+  const closedStatuses = new Set(['finalized', 'submitted', 'confirmed', 'locked', 'completed']);
+  const ids = new Set();
+
+  getReports()
+    .filter(report => closedStatuses.has(report.status) && (!exceptReportId || report.id !== exceptReportId))
+    .forEach(report => (report.selectedRefundRowIds || []).forEach(id => { if (id) ids.add(id); }));
+
+  getLostCases()
+    .filter(item => ['confirmed', 'completed'].includes(item.status) && (!exceptLostCaseId || item.id !== exceptLostCaseId))
+    .forEach(item => {
+      if (item.receiptKey) ids.add(item.receiptKey);
+      const fallbackKey = advanceKey({
+        receiptNo: item.receiptNo,
+        patientName: item.patientName,
+        dateISO: item.receiptDateISO,
+        date: item.receiptDate
+      });
+      if (fallbackKey) ids.add(fallbackKey);
+    });
+
+  return ids;
+}
+
+function getClosedRefundReceiptIds(exceptReportId = '') {
+  return getClosedAdvanceReceiptIds({ exceptReportId });
+}
+
+function getReceiptHistoryRows(options = {}) {
   // Lấy TẤT CẢ biên lai tạm ứng đã có trong hệ thống:
   // 1) Dữ liệu đang hiển thị trên màn hình hiện tại.
   // 2) Kho biên lai đã lưu khi upload/lưu báo cáo.
-  // 3) Các báo cáo đã lập trước đó, không phụ thuộc trạng thái.
-  // Dùng key theo số phiếu + bệnh nhân + ngày để tìm kiếm ổn định và tránh trùng dòng.
+  // 3) Các báo cáo đã lập trước đó.
+  // Mặc định sẽ loại các biên lai đã thu hồi trong báo cáo đã chốt/gửi/xác nhận,
+  // để người khác không thu hồi lại lần hai. Khi in báo cáo cũ thì truyền includeClosed=true.
+  const includeClosed = !!options.includeClosed;
+  const exceptReportId = options.exceptReportId ?? currentReport?.id ?? '';
+  const closedRefundIds = includeClosed ? new Set() : getClosedAdvanceReceiptIds({ exceptReportId });
   const map = new Map();
 
   function pushReceipt(item, sourceRank, sourceTime = '') {
     if (!item || !item.receiptNo) return;
     const key = advanceKey(item);
     if (!key) return;
+    if (closedRefundIds.has(key)) return;
     const existing = map.get(key);
     const row = {
       id: key,
@@ -1237,7 +1274,7 @@ function useReceiptHistoryTotal() {
 function getSelectedRecoveredRowsForReport(report = currentReport) {
   const ids = new Set(report.selectedRefundRowIds || []);
   if (!ids.size) return [];
-  return getReceiptHistoryRows()
+  return getReceiptHistoryRows({ includeClosed: true })
     .filter(row => ids.has(row.id))
     .map(row => ({
       ...row,
@@ -1844,13 +1881,16 @@ function renderLostImagePreview() {
 
 function searchReceipts() {
   const q = normalizeText($('lostSearchInput').value);
-  const advances = getAdvances().filter(r => !q || normalizeText(Object.values(r).join(' ')).includes(q));
+  const closedIds = getClosedAdvanceReceiptIds({ exceptLostCaseId: currentLostCaseId || '' });
+  const advances = getAdvances()
+    .filter(r => !closedIds.has(r.key || advanceKey(r)))
+    .filter(r => !q || normalizeText(Object.values(r).join(' ')).includes(q));
   renderTable('lostSearchTable', ['Ngày thu', 'Phiếu thu', 'Họ tên', 'Số tiền', 'Khoa/phòng', 'Chọn'], advances.slice(0, 100), r => `
     <tr>
       <td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.receiptNo)}</td><td>${escapeHtml(r.patientName)}</td>
       <td class="money">${formatMoney(r.amount)}</td><td>${escapeHtml(r.department)}</td>
       <td><button class="btn small primary" onclick="selectReceiptForLost('${r.key}')">Chọn</button></td>
-    </tr>`, 'Chưa có dữ liệu. Cần upload/lưu báo cáo thu tạm ứng trước.');
+    </tr>`, 'Không có biên lai phù hợp hoặc biên lai đã kết thúc vòng đời.');
 }
 
 function selectReceiptForLost(key) {
@@ -2239,7 +2279,7 @@ function buildRecoveredReceiptsReport() {
   if (!from || !to) return showToast('Chọn từ ngày và đến ngày trước khi lập danh sách biên lai đã thu hồi.', 'error');
   if (from > to) return showToast('Từ ngày không được lớn hơn đến ngày.', 'error');
 
-  const receiptRows = getReceiptHistoryRows();
+  const receiptRows = getReceiptHistoryRows({ includeClosed: true });
   const receiptById = new Map(receiptRows.map(r => [r.id, r]));
   const receiptByText = new Map(receiptRows.map(r => [normalizeText(`${r.receiptNo}|${r.patientName}`), r]));
   const rows = [];
@@ -2412,7 +2452,7 @@ function readRecoveredParams() {
 }
 
 function collectRecoveredRowsByParams(params) {
-  const receiptRows = getReceiptHistoryRows();
+  const receiptRows = getReceiptHistoryRows({ includeClosed: true });
   const receiptById = new Map(receiptRows.map(r => [r.id, r]));
   const receiptByText = new Map(receiptRows.map(r => [normalizeText(`${r.receiptNo}|${r.patientName}`), r]));
   const rows = [];
@@ -2913,7 +2953,7 @@ function amountFromSelectedRefundRows(selectedIds, fromISO, toISO, reportDateISO
   // Vì vậy khi in/lọc theo thời gian, nếu ngày báo cáo nằm trong khoảng thì lấy toàn bộ biên lai đã tích chọn.
   if (reportDateISO && !rowInPrintPeriod(reportDateISO, fromISO, toISO)) return 0;
   const selected = new Set(selectedIds);
-  return getReceiptHistoryRows()
+  return getReceiptHistoryRows({ includeClosed: true })
     .filter(r => selected.has(r.id))
     .reduce((s, r) => s + Number(r.amount || 0), 0);
 }
@@ -3039,7 +3079,30 @@ function makeReportHtml(report) {
     </div>`;
 }
 
-function printHtml(html) {
+function ensurePrintOrientationStyle(targetDoc = document) {
+  let style = targetDoc.getElementById('dynamicPrintOrientationStyle');
+  if (!style) {
+    style = targetDoc.createElement('style');
+    style.id = 'dynamicPrintOrientationStyle';
+    targetDoc.head.appendChild(style);
+  }
+  return style;
+}
+
+function getPrintOrientationFromUser(defaultValue = 'portrait') {
+  const value = prompt('Chọn kiểu trang in: nhập 1 = trang dọc, nhập 2 = trang ngang', defaultValue === 'landscape' ? '2' : '1');
+  return String(value || '1').trim() === '2' ? 'landscape' : 'portrait';
+}
+
+function applyPrintOrientation(orientation = 'portrait', targetDoc = document) {
+  const isLandscape = orientation === 'landscape';
+  const style = ensurePrintOrientationStyle(targetDoc);
+  style.textContent = `@media print { @page { size: A4 ${isLandscape ? 'landscape' : 'portrait'}; margin: 5mm; } .print-doc { max-width: ${isLandscape ? '287mm' : '200mm'} !important; } }`;
+}
+
+function printHtml(html, orientation = null) {
+  const selectedOrientation = orientation || getPrintOrientationFromUser('portrait');
+  applyPrintOrientation(selectedOrientation, document);
   $('printArea').innerHTML = html;
   setTimeout(() => window.print(), 80);
 }
@@ -3051,8 +3114,19 @@ function previewHtml(html) {
     showToast('Trình duyệt chặn cửa sổ xem trước. Đã đưa nội dung vào vùng in.', 'warn');
     return;
   }
+  const previewScript = `
+    <script>
+      function setPrintOrientation(value){
+        var style = document.getElementById('dynamicPrintOrientationStyle');
+        if(!style){ style = document.createElement('style'); style.id = 'dynamicPrintOrientationStyle'; document.head.appendChild(style); }
+        var landscape = value === 'landscape';
+        style.textContent = '@media print { @page { size: A4 ' + (landscape ? 'landscape' : 'portrait') + '; margin: 5mm; } .print-doc { max-width: ' + (landscape ? '287mm' : '200mm') + ' !important; } .preview-actions{display:none!important;} }';
+        document.body.classList.toggle('preview-landscape', landscape);
+      }
+      window.addEventListener('DOMContentLoaded', function(){ setPrintOrientation('portrait'); });
+    <\/script>`;
   win.document.open();
-  win.document.write(`<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>Xem trước báo cáo</title><link rel="stylesheet" href="style.css"><style>body{background:#fff;padding:18px}.preview-actions{position:sticky;top:0;background:#fff;padding:8px;text-align:right;border-bottom:1px solid #d8e6dc;margin-bottom:10px}.print-area{display:block}.print-doc{display:block;max-width:1000px;margin:0 auto}@media print{.preview-actions{display:none}}</style></head><body><div class="preview-actions"><button onclick="window.print()" style="padding:8px 14px;border-radius:10px;border:1px solid #0b8f43;background:#0b8f43;color:#fff;font-weight:700;cursor:pointer">In báo cáo</button></div>${html}</body></html>`);
+  win.document.write(`<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>Xem trước báo cáo</title><link rel="stylesheet" href="style.css"><style>body{background:#fff;padding:18px}.preview-actions{position:sticky;top:0;z-index:10;background:#fff;padding:8px;text-align:right;border-bottom:1px solid #d8e6dc;margin-bottom:10px}.print-area{display:block}.print-doc{display:block;max-width:1000px;margin:0 auto}.preview-actions select{padding:7px 10px;border:1px solid #bcd8c8;border-radius:9px;margin-right:8px}.preview-landscape .print-doc{max-width:1300px}@media print{.preview-actions{display:none}}</style>${previewScript}</head><body><div class="preview-actions"><label>Kiểu trang: <select id="previewOrientation" onchange="setPrintOrientation(this.value)"><option value="portrait">Trang dọc</option><option value="landscape">Trang ngang</option></select></label><button onclick="setPrintOrientation(document.getElementById('previewOrientation').value); window.print()" style="padding:8px 14px;border-radius:10px;border:1px solid #0b8f43;background:#0b8f43;color:#fff;font-weight:700;cursor:pointer">In báo cáo</button></div>${html}</body></html>`);
   win.document.close();
 }
 
