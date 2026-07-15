@@ -2563,7 +2563,7 @@ function makeRecoveredParamsHtml(rows, params) {
     <table class="cashbook-print-table"><thead><tr><th>STT</th><th>Số phiếu thu</th><th>Ngày thu</th><th>Họ tên bệnh nhân</th><th>Tuổi</th><th>Số tiền đã tạm ứng</th><th>Số tiền đã thu hồi</th><th>Ngày thu hồi</th><th>Người thu hồi</th><th>Ghi chú</th></tr></thead>
       <tbody>${body}${totalRow}</tbody>
     </table>
-    <div class="print-sign"><div><b>Người lập</b><br><br><br><br>${escapeHtml(currentUser?.fullName || '')}</div><div><b>Thủ quỹ</b><br><br><br><br></div></div>
+    <div class="print-sign"><div><b>Người lập</b><br><br><br><br><br><br>${escapeHtml(currentUser?.fullName || '')}</div><div><b>Thủ quỹ</b><br><br><br><br><br><br></div></div>
     </div>`;
 }
 
@@ -3026,7 +3026,7 @@ function makeRecoveredReportHtmlFromRows(rows, title, subtitle, signerName = '')
     <table class="cashbook-print-table"><thead><tr><th>STT</th><th>Số phiếu thu</th><th>Ngày thu</th><th>Họ tên bệnh nhân</th><th>Tuổi</th><th>Số tiền đã tạm ứng</th><th>Số tiền đã thu hồi</th><th>Ngày thu hồi</th><th>Người thu hồi</th></tr></thead>
       <tbody>${body}${totalRow}</tbody>
     </table>
-    <div class="print-sign"><div><b>Người lập</b><br><br><br><br>${escapeHtml(signerName || '')}</div><div><b>Thủ quỹ</b><br><br><br><br></div></div>
+    <div class="print-sign"><div><b>Người lập</b><br><br><br><br><br><br>${escapeHtml(signerName || '')}</div><div><b>Thủ quỹ</b><br><br><br><br><br><br></div></div>
     </div>`;
 }
 
@@ -3075,7 +3075,7 @@ function makeReportHtml(report) {
     <table class="print-summary"><tbody>${reportSummaryRows(report).map(([label, value]) => `<tr><td>${escapeHtml(label)}</td><td style="text-align:right"><b>${formatMoney(value)}</b></td></tr>`).join('')}</tbody></table>
     <p><b>Ghi chú:</b> ${escapeHtml([report.note || '', makeLostReceiptNote(report)].filter(Boolean).join(' | '))}</p>
     ${report.treasurerName ? `<p><b>Thủ quỹ xác nhận:</b> ${escapeHtml(report.treasurerName)} ${report.confirmedAt ? `- ${new Date(report.confirmedAt).toLocaleString('vi-VN')}` : ''}</p>` : ''}
-    <div class="print-sign"><div><b>Kế toán viên</b><br><br><br><br>${escapeHtml(report.createdByName || '')}</div><div><b>Thủ quỹ</b><br><br><br><br>${escapeHtml(report.treasurerName || '')}</div></div>
+    <div class="print-sign"><div><b>Kế toán viên</b><br><br><br><br><br><br>${escapeHtml(report.createdByName || '')}</div><div><b>Thủ quỹ</b><br><br><br><br><br><br>${escapeHtml(report.treasurerName || '')}</div></div>
     </div>`;
 }
 
@@ -3089,20 +3089,38 @@ function ensurePrintOrientationStyle(targetDoc = document) {
   return style;
 }
 
-function getPrintOrientationFromUser(defaultValue = 'portrait') {
-  const value = prompt('Chọn kiểu trang in: nhập 1 = trang dọc, nhập 2 = trang ngang', defaultValue === 'landscape' ? '2' : '1');
-  return String(value || '1').trim() === '2' ? 'landscape' : 'portrait';
+let pendingPrintHtml = null;
+
+function openPrintOrientationModal(html) {
+  pendingPrintHtml = html;
+  const modal = $('printOrientationModal');
+  if (modal) modal.classList.remove('hidden');
+}
+
+function closePrintOrientationModal() {
+  pendingPrintHtml = null;
+  const modal = $('printOrientationModal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function confirmPrintOrientation(orientation = 'portrait') {
+  if (!pendingPrintHtml) return closePrintOrientationModal();
+  const html = pendingPrintHtml;
+  pendingPrintHtml = null;
+  const modal = $('printOrientationModal');
+  if (modal) modal.classList.add('hidden');
+  printHtml(html, orientation);
 }
 
 function applyPrintOrientation(orientation = 'portrait', targetDoc = document) {
   const isLandscape = orientation === 'landscape';
   const style = ensurePrintOrientationStyle(targetDoc);
-  style.textContent = `@media print { @page { size: A4 ${isLandscape ? 'landscape' : 'portrait'}; margin: 5mm; } .print-doc { max-width: ${isLandscape ? '287mm' : '200mm'} !important; } }`;
+  style.textContent = `@media print { @page { size: A4 ${isLandscape ? 'landscape' : 'portrait'}; margin: 5mm; } .print-doc { max-width: ${isLandscape ? '287mm' : '200mm'} !important; } .print-doc table { table-layout: auto !important; } }`;
 }
 
 function printHtml(html, orientation = null) {
-  const selectedOrientation = orientation || getPrintOrientationFromUser('portrait');
-  applyPrintOrientation(selectedOrientation, document);
+  if (!orientation) return openPrintOrientationModal(html);
+  applyPrintOrientation(orientation, document);
   $('printArea').innerHTML = html;
   setTimeout(() => window.print(), 80);
 }
@@ -3126,7 +3144,7 @@ function previewHtml(html) {
       window.addEventListener('DOMContentLoaded', function(){ setPrintOrientation('portrait'); });
     <\/script>`;
   win.document.open();
-  win.document.write(`<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>Xem trước báo cáo</title><link rel="stylesheet" href="style.css"><style>body{background:#fff;padding:18px}.preview-actions{position:sticky;top:0;z-index:10;background:#fff;padding:8px;text-align:right;border-bottom:1px solid #d8e6dc;margin-bottom:10px}.print-area{display:block}.print-doc{display:block;max-width:1000px;margin:0 auto}.preview-actions select{padding:7px 10px;border:1px solid #bcd8c8;border-radius:9px;margin-right:8px}.preview-landscape .print-doc{max-width:1300px}@media print{.preview-actions{display:none}}</style>${previewScript}</head><body><div class="preview-actions"><label>Kiểu trang: <select id="previewOrientation" onchange="setPrintOrientation(this.value)"><option value="portrait">Trang dọc</option><option value="landscape">Trang ngang</option></select></label><button onclick="setPrintOrientation(document.getElementById('previewOrientation').value); window.print()" style="padding:8px 14px;border-radius:10px;border:1px solid #0b8f43;background:#0b8f43;color:#fff;font-weight:700;cursor:pointer">In báo cáo</button></div>${html}</body></html>`);
+  win.document.write(`<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>Xem trước báo cáo</title><link rel="stylesheet" href="style.css?v=45"><style>body{background:#fff;padding:18px}.preview-actions{position:sticky;top:0;z-index:10;background:#fff;padding:8px;text-align:right;border-bottom:1px solid #d8e6dc;margin-bottom:10px}.print-area{display:block}.print-doc{display:block;max-width:1000px;margin:0 auto}.preview-actions button{padding:8px 14px;border-radius:10px;border:1px solid #0b8f43;background:#fff;color:#0b8f43;font-weight:700;cursor:pointer;margin-left:6px}.preview-actions button.active{background:#0b8f43;color:#fff}.preview-actions button.print-btn{background:#0b8f43;color:#fff}.preview-landscape .print-doc{max-width:1300px}@media print{.preview-actions{display:none}}</style>${previewScript}</head><body><div class="preview-actions"><button id="btnPreviewPortrait" class="active" onclick="document.getElementById('btnPreviewPortrait').classList.add('active');document.getElementById('btnPreviewLandscape').classList.remove('active');setPrintOrientation('portrait')">Trang dọc</button><button id="btnPreviewLandscape" onclick="document.getElementById('btnPreviewLandscape').classList.add('active');document.getElementById('btnPreviewPortrait').classList.remove('active');setPrintOrientation('landscape')">Trang ngang</button><button class="print-btn" onclick="window.print()">In báo cáo</button></div>${html}</body></html>`);
   win.document.close();
 }
 
@@ -3436,7 +3454,7 @@ function makeLostCaseHtml(item) {
     </tbody></table>
     <p><b>Ảnh hồ sơ đã lưu:</b> ${(item.images || []).length} ảnh.</p>
     ${item.treasurerName ? `<p><b>Thủ quỹ xác nhận:</b> ${escapeHtml(item.treasurerName)}</p>` : ''}
-    <div class="print-sign"><div><b>Người lập hồ sơ</b><br><br><br><br>${escapeHtml(item.createdByName || '')}</div><div><b>Thủ quỹ</b><br><br><br><br>${escapeHtml(item.treasurerName || '')}</div></div>
+    <div class="print-sign"><div><b>Người lập hồ sơ</b><br><br><br><br><br><br>${escapeHtml(item.createdByName || '')}</div><div><b>Thủ quỹ</b><br><br><br><br><br><br>${escapeHtml(item.treasurerName || '')}</div></div>
     </div>`;
 }
 
@@ -3483,7 +3501,7 @@ function makeRecoveredReceiptsHtml() {
     <table class="cashbook-print-table"><thead><tr><th>Số phiếu thu</th><th>Ngày thu</th><th>Họ tên bệnh nhân</th><th>Tuổi</th><th>Số tiền đã tạm ứng</th><th>Số tiền đã thu hồi</th><th>Ngày thu hồi</th><th>Người thu hồi</th><th>Ghi chú</th></tr></thead>
       <tbody>${body}${recoveredReceiptRows.length ? totalRow : ''}</tbody>
     </table>
-    <div class="print-sign"><div><b>Người lập</b><br><br><br><br></div><div><b>Thủ quỹ</b><br><br><br><br>${escapeHtml(currentUser.fullName || '')}</div></div>
+    <div class="print-sign"><div><b>Người lập</b><br><br><br><br><br><br></div><div><b>Thủ quỹ</b><br><br><br><br><br><br>${escapeHtml(currentUser.fullName || '')}</div></div>
     </div>`;
 }
 
@@ -3499,7 +3517,7 @@ function makeCashbookHtml() {
     <table class="cashbook-print-table"><thead><tr><th>Số phiếu thu</th><th>Ngày thu</th><th>Họ tên bệnh nhân</th><th>Tuổi</th><th>Số tiền đã tạm ứng</th><th>Đã trả tạm ứng</th><th>Ngày trả</th><th>Còn lại</th><th>Ghi chú</th></tr></thead>
       <tbody>${detailRows}${cashbookRows.length ? totalRow : ''}</tbody>
     </table>
-    <div class="print-sign"><div><b>Người lập</b><br><br><br><br></div><div><b>Thủ quỹ</b><br><br><br><br>${escapeHtml(currentUser.fullName || '')}</div></div>
+    <div class="print-sign"><div><b>Người lập</b><br><br><br><br><br><br></div><div><b>Thủ quỹ</b><br><br><br><br><br><br>${escapeHtml(currentUser.fullName || '')}</div></div>
     </div>`;
 }
 
@@ -3579,6 +3597,10 @@ function bindEvents() {
   if ($('btnCancelPrintPeriod')) $('btnCancelPrintPeriod').addEventListener('click', closePrintPeriodModal);
   if ($('btnConfirmPrintPeriod')) $('btnConfirmPrintPeriod').addEventListener('click', confirmPrintPeriodAndPrint);
   if ($('printPeriodModal')) $('printPeriodModal').addEventListener('click', e => { if (e.target.id === 'printPeriodModal') closePrintPeriodModal(); });
+  if ($('btnClosePrintOrientationModal')) $('btnClosePrintOrientationModal').addEventListener('click', closePrintOrientationModal);
+  if ($('btnPrintPortrait')) $('btnPrintPortrait').addEventListener('click', () => confirmPrintOrientation('portrait'));
+  if ($('btnPrintLandscape')) $('btnPrintLandscape').addEventListener('click', () => confirmPrintOrientation('landscape'));
+  if ($('printOrientationModal')) $('printOrientationModal').addEventListener('click', e => { if (e.target.id === 'printOrientationModal') closePrintOrientationModal(); });
 
   $('btnReadAdvance').addEventListener('click', importAdvanceFile);
   $('btnReadInvoice').addEventListener('click', importInvoiceFile);

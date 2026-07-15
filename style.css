@@ -955,3 +955,102 @@ input, select, textarea {
 @media (max-width: 720px) {
   .form-span-two { grid-column: auto; }
 }
+
+/* v45: báo cáo in dễ đọc hơn, chữ lớn hơn, cột tự co theo nội dung, vùng ký rộng hơn */
+.print-orientation-card {
+  max-width: 440px;
+}
+.orientation-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 12px;
+}
+.orientation-btn {
+  min-height: 48px;
+  font-size: 16px;
+}
+
+.print-doc {
+  font-size: 13px !important;
+  line-height: 1.28 !important;
+}
+.print-doc table {
+  table-layout: auto !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+.print-doc th,
+.print-doc td {
+  padding: 4px 5px !important;
+  word-break: normal !important;
+  overflow-wrap: break-word !important;
+}
+.print-doc th {
+  white-space: nowrap;
+}
+.print-doc .money,
+.print-doc .nowrap {
+  white-space: nowrap !important;
+}
+.print-title h2 {
+  font-size: 20px !important;
+}
+.print-title p {
+  font-size: 13px !important;
+}
+.print-sign {
+  margin-top: 34px !important;
+  gap: 36px !important;
+}
+.print-sign > div {
+  min-height: 112px;
+  line-height: 1.42 !important;
+}
+
+@media print {
+  .print-doc {
+    font-size: 11px !important;
+    line-height: 1.18 !important;
+    max-width: 200mm !important;
+  }
+  .print-doc table {
+    table-layout: auto !important;
+    font-size: inherit !important;
+    line-height: inherit !important;
+  }
+  .print-doc th,
+  .print-doc td {
+    padding: 3px 4px !important;
+    word-break: normal !important;
+    overflow-wrap: break-word !important;
+  }
+  .print-doc th {
+    white-space: nowrap !important;
+  }
+  .print-doc .money,
+  .print-doc .nowrap {
+    white-space: nowrap !important;
+  }
+  .print-title h2 {
+    font-size: 17px !important;
+    line-height: 1.18 !important;
+  }
+  .print-title p {
+    font-size: 11px !important;
+  }
+  .print-header img {
+    width: 44px !important;
+    height: 44px !important;
+  }
+  .print-sign {
+    margin-top: 28px !important;
+    gap: 36px !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .print-sign > div {
+    min-height: 105px !important;
+    line-height: 1.42 !important;
+  }
+}
