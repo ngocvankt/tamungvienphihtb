@@ -1744,7 +1744,7 @@ function renderMyReports() {
       <td class="money">${formatMoney(calcReportRemain(viewReport))}</td>
       <td>${statusBadge(r.status)}</td>
       <td><div class="row-actions">
-        <button class="btn small" onclick="loadReport('${r.id}')">${canEdit ? 'Sửa' : 'Xem'}</button>
+        <button class="btn small" onclick="${canEdit ? `editReport('${r.id}')` : `loadReport('${r.id}')`}">${canEdit ? 'Sửa' : 'Xem'}</button>
         ${canDelete ? `<button class="btn small danger" onclick="deleteReport('${r.id}')">Xóa</button>` : ''}
         <button class="btn small" onclick="printReportById('${r.id}')">In</button>
         <button class="btn small" onclick="printRecoveredReportById('${r.id}')">In thu hồi</button>
@@ -1793,7 +1793,37 @@ function loadReport(id) {
   showToast(reportInputEnabled ? 'Đã mở báo cáo để sửa. Có thể upload lại file nếu cần.' : 'Đã mở báo cáo để xem.');
 }
 
+
 window.loadReport = loadReport;
+
+function editReport(id) {
+  const report = getReports().find(r => r.id === id);
+  if (!report || !canViewReport(report)) return showToast('Không tìm thấy báo cáo.', 'error');
+  if (!canEditReport(report)) return showToast('Báo cáo này không còn được phép sửa.', 'error');
+
+  // Mở đúng báo cáo gốc để sửa/upload lại, giữ nguyên mã báo cáo và ngày báo cáo.
+  // Chuyển trạng thái làm việc về nháp để bắt người dùng chốt lại sau khi sửa.
+  currentReport = JSON.parse(JSON.stringify(report));
+  currentReport.status = 'draft';
+  currentReport.updatedAt = nowISO();
+
+  $('refundAmount').value = currentReport.refundAmount ? formatMoney(currentReport.refundAmount) : '';
+  $('lostReceiptAmount').value = currentReport.lostReceiptAmount ? formatMoney(currentReport.lostReceiptAmount) : '';
+  $('cashFloat').value = currentReport.cashFloat ? formatMoney(currentReport.cashFloat) : '';
+  $('reportNote').value = currentReport.note || '';
+  ['advanceFile', 'invoiceFile'].forEach(inputId => { const el = $(inputId); if (el) el.value = ''; });
+  ['advanceImportSummary', 'invoiceImportSummary'].forEach(infoId => { const el = $(infoId); if (el) el.textContent = ''; });
+
+  reportInputEnabled = true;
+  renderReportTables();
+  updateReportTotals();
+  applyRoleControls();
+  setActiveTab('tabReport');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  showToast('Đã mở báo cáo để sửa. Có thể upload lại file, sau đó bấm Chốt báo cáo.');
+}
+
+window.editReport = editReport;
 
 function deleteReport(id) {
   const reports = getReports();
@@ -3426,17 +3456,39 @@ function confirmPrintPeriodAndPrint() {
 }
 
 function printCurrentReport() {
-  openPrintPeriodModal(scopeReportForCurrentUser(buildReportObject(currentReport.status || 'draft')));
+  const report = scopeReportForCurrentUser({
+    ...buildReportObject(currentReport.status || 'draft'),
+    printDateFromISO: '',
+    printDateToISO: '',
+    dateFrom: '',
+    dateTo: ''
+  });
+  printHtml(makeReportHtml(report));
 }
 
 function previewCurrentReport() {
-  openPreviewPeriodModal(scopeReportForCurrentUser(buildReportObject(currentReport.status || 'draft')));
+  const report = scopeReportForCurrentUser({
+    ...buildReportObject(currentReport.status || 'draft'),
+    printDateFromISO: '',
+    printDateToISO: '',
+    dateFrom: '',
+    dateTo: ''
+  });
+  previewHtml(makeReportHtml(report));
 }
 
 function printReportById(id) {
   const savedReport = getReports().find(r => r.id === id);
-  if (!savedReport) return showToast('Không tìm thấy báo cáo.', 'error');
-  openPrintPeriodModal(scopeReportForCurrentUser(savedReport));
+  if (!savedReport || !canViewReport(savedReport)) return showToast('Không tìm thấy báo cáo.', 'error');
+  // Báo cáo đã lập/chốt thì in đúng dữ liệu của chính báo cáo đó, không hỏi lại khoảng thời gian.
+  const report = scopeReportForCurrentUser({
+    ...savedReport,
+    printDateFromISO: '',
+    printDateToISO: '',
+    dateFrom: '',
+    dateTo: ''
+  });
+  printHtml(makeReportHtml(report));
 }
 
 window.printReportById = printReportById;
