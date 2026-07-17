@@ -32,7 +32,7 @@ const FIREBASE_CORE_KEYS = [APP.users, APP.settings];
 const FIREBASE_TEST_KEYS = [APP.reports, APP.advances, APP.invoices, APP.lostCases, APP.refunds];
 const FIREBASE_CLEAR_MARKER_KEY = 'tuvp_last_clear_test_v1';
 const FIREBASE_BUSINESS_MARKER_KEY = '_businessDataAfterClearAt';
-const APP_VERSION = 'v42';
+const APP_VERSION = 'v50';
 
 let firebaseSyncReady = false;
 let firebaseSyncDisabled = false;
@@ -1040,6 +1040,7 @@ function getFilteredRows(rows, searchId) {
 
 function renderTable(tableId, headers, rows, rowHtml, emptyText = 'Chưa có dữ liệu.') {
   const table = $(tableId);
+  rows = Array.isArray(rows) ? rows : [];
   if (!rows.length) {
     table.innerHTML = `<thead><tr>${headers.map(h => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody><tr><td colspan="${headers.length}" class="muted">${escapeHtml(emptyText)}</td></tr></tbody>`;
     return;
@@ -1164,17 +1165,33 @@ function getVisibleReceiptHistoryRows() {
 }
 
 function getSelectedRefundRowsFromIds(ids, report = currentReport) {
-  const selected = new Set(ids || []);
+  const selected = new Set((ids || []).filter(Boolean));
   if (!selected.size) return [];
 
-  const sourceRows = getReceiptHistoryRows({ includeClosed: true });
-  const rowMap = new Map(sourceRows.map(row => [row.id, row]));
-  (report?.selectedRefundRows || []).forEach(row => {
-    if (row?.id && !rowMap.has(row.id)) rowMap.set(row.id, row);
-  });
+  const rowMap = new Map();
+  const putRow = (row) => {
+    if (!row) return;
+    const id = row.id || advanceKey(row);
+    if (!id) return;
+    if (!rowMap.has(id)) {
+      rowMap.set(id, { ...row, id, amount: Number(row.amount || 0) });
+    }
+  };
 
+  // Ưu tiên snapshot đã lưu trong chính báo cáo, để khi sửa/xem lại không bị mất danh sách đã tích.
+  (report?.selectedRefundRows || []).forEach(putRow);
+  (currentReport?.selectedRefundRows || []).forEach(putRow);
+
+  // Bổ sung từ tất cả nguồn dữ liệu hiện có, bao gồm cả biên lai đã kết thúc vòng đời.
+  getReceiptHistoryRows({ includeClosed: true }).forEach(putRow);
+  (currentReport?.advanceRows || []).forEach(putRow);
+  getAdvances().forEach(putRow);
+  getReports().forEach(rep => (rep.advanceRows || []).forEach(putRow));
+
+  // Trường hợp id cũ là receiptKey nhưng dòng chỉ có advanceKey khác cách tạo, thử khớp mềm theo số phiếu/người nộp/ngày.
+  const allRows = Array.from(rowMap.values());
   return Array.from(selected)
-    .map(id => rowMap.get(id))
+    .map(id => rowMap.get(id) || allRows.find(row => normalizeText(row.id) === normalizeText(id) || normalizeText(advanceKey(row)) === normalizeText(id)))
     .filter(Boolean);
 }
 
@@ -1269,14 +1286,16 @@ function closeReceiptHistoryModal() {
 }
 
 function useReceiptHistoryTotal() {
-  const selectedIds = Array.from(receiptHistorySelected);
+  const selectedIds = Array.from(receiptHistorySelected).filter(Boolean);
   const selectedRows = getSelectedRefundRowsFromIds(selectedIds, currentReport);
   const total = selectedRows.reduce((s, r) => s + Number(r.amount || 0), 0);
-  if (!selectedIds.length || !total) return showToast('Chưa tích chọn biên lai thu hồi tạm ứng.', 'error');
+  if (!selectedIds.length || !selectedRows.length || !total) {
+    return showToast('Chưa tích chọn biên lai thu hồi tạm ứng.', 'error');
+  }
 
   currentReport.selectedRefundRowIds = selectedIds;
   currentReport.selectedRefundRows = selectedRows.map(r => ({
-    id: r.id,
+    id: r.id || advanceKey(r),
     date: r.date || '',
     dateISO: r.dateISO || parseDateToISO(r.date),
     receiptNo: r.receiptNo || '',
@@ -1289,13 +1308,24 @@ function useReceiptHistoryTotal() {
   }));
   currentReport.reportDateISO = currentReport.reportDateISO || todayISO();
   currentReport.reportDate = currentReport.reportDate || formatPrintDate(currentReport.reportDateISO);
+  if (['finalized', 'submitted', 'confirmed', 'locked', 'completed'].includes(currentReport.status)) {
+    currentReport.status = 'draft';
+  }
 
   const lostAmount = parseMoney($('lostReceiptAmount').value);
-  $('refundAmount').value = formatMoney(total + lostAmount);
+  const refundTotal = total + lostAmount;
+  $('refundAmount').value = formatMoney(refundTotal);
+  currentReport.refundAmount = refundTotal;
+  currentReport.lostReceiptAmount = lostAmount;
+  currentReport.cashFloat = parseMoney($('cashFloat').value);
+  currentReport.note = $('reportNote').value.trim();
+  updateReportFromInputs();
   renderSelectedRecoveredRows();
   updateReportTotals();
   closeReceiptHistoryModal();
-  showToast('Đã lấy tổng tiền biên lai được chọn vào ô tạm ứng thu hồi.');
+  const infoCard = document.querySelector('.report-info-card') || $('refundAmount');
+  if (infoCard) infoCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  showToast(`Đã lấy ${selectedRows.length} biên lai, tổng tiền ${formatMoney(total)} vào ô tạm ứng thu hồi.`);
 }
 
 
@@ -1495,11 +1525,18 @@ function updateReportFromInputs() {
 
 function updateReportTotals() {
   updateReportFromInputs();
-  const sumAdvance = currentReport.advanceRows.reduce((s, r) => s + Number(r.amount || 0), 0);
-  const sumInvoice = currentReport.invoiceRows.reduce((s, r) => s + Number(r.amount || 0), 0);
+  const sumAdvance = (currentReport.advanceRows || []).reduce((s, r) => s + Number(r.amount || 0), 0);
+  const sumInvoice = (currentReport.invoiceRows || []).reduce((s, r) => s + Number(r.amount || 0), 0);
+  const refundAmount = Number(currentReport.refundAmount || 0);
+  const cashFloat = Number(currentReport.cashFloat || 0);
   // Còn lại phải nộp = Tổng thu tạm ứng + Tổng HĐĐT + Tiền mặt ứng quỹ - Tổng tiền tạm ứng thu hồi.
-  // Tiền xử lý mất phiếu đã được tự động cộng vào ô Tổng tiền tạm ứng thu hồi.
-  const remain = sumAdvance + sumInvoice + currentReport.cashFloat - currentReport.refundAmount;
+  // Không ép về 0, vì báo cáo chỉ có thu hồi tạm ứng phải thể hiện số âm để thủ quỹ/kế toán nhìn ra là tiền đã trả.
+  const remain = sumAdvance + sumInvoice + cashFloat - refundAmount;
+  currentReport.sumAdvance = sumAdvance;
+  currentReport.sumInvoice = sumInvoice;
+  currentReport.totalCollection = sumAdvance + sumInvoice + cashFloat;
+  currentReport.remainPay = remain;
+  currentReport.totalPayable = remain;
   $('sumAdvance').textContent = formatMoney(sumAdvance);
   $('sumInvoice').textContent = formatMoney(sumInvoice);
   if ($('sumPayable')) $('sumPayable').textContent = formatMoney(remain);
@@ -1508,13 +1545,18 @@ function updateReportTotals() {
 
 function buildReportObject(status = 'draft') {
   updateReportFromInputs();
-  const sumAdvance = currentReport.advanceRows.reduce((s, r) => s + Number(r.amount || 0), 0);
-  const sumInvoice = currentReport.invoiceRows.reduce((s, r) => s + Number(r.amount || 0), 0);
+  const sumAdvance = (currentReport.advanceRows || []).reduce((s, r) => s + Number(r.amount || 0), 0);
+  const sumInvoice = (currentReport.invoiceRows || []).reduce((s, r) => s + Number(r.amount || 0), 0);
   const totalCollection = sumAdvance + sumInvoice + currentReport.cashFloat;
   if (currentReport.lostReceiptAmount && currentReport.refundAmount < currentReport.lostReceiptAmount) currentReport.refundAmount = currentReport.lostReceiptAmount;
   const remainPay = totalCollection - currentReport.refundAmount;
   return {
     ...currentReport,
+    advanceRows: currentReport.advanceRows || [],
+    invoiceRows: currentReport.invoiceRows || [],
+    selectedRefundRowIds: currentReport.selectedRefundRowIds || [],
+    selectedRefundRows: currentReport.selectedRefundRows || [],
+    selectedLostCaseIds: currentReport.selectedLostCaseIds || [],
     id: currentReport.id || uid('report'),
     code: currentReport.code || `BC-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`,
     status,
@@ -1540,7 +1582,8 @@ function buildReportObject(status = 'draft') {
 function saveCurrentReport(status = 'draft') {
   if (!['admin', 'ketoan'].includes(currentUser.role)) { showToast('Tài khoản này không có quyền lập báo cáo.', 'error'); return false; }
   const report = buildReportObject(status);
-  if (!report.advanceRows.length && !report.invoiceRows.length && !report.refundAmount && !report.lostReceiptAmount) {
+  const hasSelectedRefundRows = !!((report.selectedRefundRowIds || []).length || (report.selectedRefundRows || []).length);
+  if (!report.advanceRows.length && !report.invoiceRows.length && !report.refundAmount && !report.lostReceiptAmount && !hasSelectedRefundRows) {
     showToast('Báo cáo chưa có dữ liệu.', 'warn'); return false;
   }
   const reports = getReports();
@@ -1559,19 +1602,101 @@ function saveCurrentReport(status = 'draft') {
   return true;
 }
 
+function ensureCurrentReportRefundSnapshot() {
+  const ids = (currentReport.selectedRefundRowIds || []).filter(Boolean);
+  if (!ids.length) {
+    currentReport.selectedRefundRows = [];
+    return;
+  }
+
+  // Khi sửa báo cáo đã chốt, các biên lai cũ có thể đã bị loại khỏi danh sách chọn
+  // để tránh thu hồi trùng. Vì vậy phải ưu tiên snapshot trong chính báo cáo và tra cứu includeClosed.
+  const rows = getSelectedRefundRowsFromIds(ids, currentReport).map(r => ({
+    id: r.id || advanceKey(r),
+    date: r.date || '',
+    dateISO: r.dateISO || parseDateToISO(r.date),
+    receiptNo: r.receiptNo || '',
+    patientName: r.patientName || '',
+    age: r.age || '',
+    gender: r.gender || '',
+    department: r.department || '',
+    amount: Number(r.amount || 0),
+    collector: r.collector || ''
+  }));
+  currentReport.selectedRefundRows = rows;
+
+  const selectedTotal = rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const lostAmount = parseMoney($('lostReceiptAmount')?.value || currentReport.lostReceiptAmount || 0);
+  if (selectedTotal || lostAmount) {
+    currentReport.lostReceiptAmount = lostAmount;
+    currentReport.refundAmount = selectedTotal + lostAmount;
+    if ($('refundAmount')) $('refundAmount').value = formatMoney(currentReport.refundAmount);
+  }
+}
+
 function finalizeCurrentReport() {
+  if (!['admin', 'ketoan'].includes(currentUser.role)) {
+    showToast('Tài khoản này không có quyền chốt báo cáo.', 'error');
+    return;
+  }
+
+  updateReportFromInputs();
+  ensureCurrentReportRefundSnapshot();
+  updateReportTotals();
+
   if (!reportHasWorkingData(currentReport)) {
     return showToast('Chưa có dữ liệu để chốt báo cáo.', 'warn');
   }
-  if (saveCurrentReport('finalized')) {
-    reportInputEnabled = false;
-    applyRoleControls();
+
+  const reports = getReports();
+  const existingIndex = currentReport.id ? reports.findIndex(r => r.id === currentReport.id) : -1;
+  const existingReport = existingIndex >= 0 ? reports[existingIndex] : null;
+
+  if (existingReport) {
+    if (!canEditReport(existingReport)) {
+      showToast('Tài khoản này không có quyền sửa/chốt lại báo cáo này hoặc báo cáo đã khóa.', 'error');
+      return;
+    }
+    if (currentUser.role === 'ketoan' && existingReport.createdBy !== currentUser.id) {
+      showToast('Kế toán viên chỉ được chốt lại báo cáo do chính tài khoản mình lập.', 'error');
+      return;
+    }
   }
+
+  // Chốt lại báo cáo đang sửa theo đúng ID cũ, không tạo báo cáo mới và không làm mất snapshot biên lai thu hồi.
+  const finalizedReport = buildReportObject('finalized');
+  finalizedReport.id = currentReport.id || finalizedReport.id;
+  finalizedReport.code = currentReport.code || finalizedReport.code;
+  finalizedReport.status = 'finalized';
+  finalizedReport.selectedRefundRowIds = (currentReport.selectedRefundRowIds || []).filter(Boolean);
+  finalizedReport.selectedRefundRows = currentReport.selectedRefundRows || [];
+  finalizedReport.updatedAt = nowISO();
+
+  if (existingIndex >= 0) reports[existingIndex] = finalizedReport;
+  else reports.push(finalizedReport);
+
+  setReports(reports);
+  currentReport = finalizedReport;
+  syncReportSourceData(finalizedReport);
+  reportInputEnabled = false;
+  renderReportTables();
+  renderMyReports();
+  renderTreasurerReports();
+  renderSelectedRecoveredRows();
+  updateReportTotals();
+  applyRoleControls();
+  showToast('Đã chốt báo cáo và lưu phiếu thu tạm ứng vào hệ thống.');
 }
 
 function reportHasWorkingData(report = currentReport) {
   if (!report) return false;
-  return !!((report.advanceRows || []).length || (report.invoiceRows || []).length || Number(report.refundAmount || 0) || Number(report.lostReceiptAmount || 0) || Number(report.cashFloat || 0));
+  return !!((report.advanceRows || []).length
+    || (report.invoiceRows || []).length
+    || (report.selectedRefundRowIds || []).length
+    || (report.selectedRefundRows || []).length
+    || Number(report.refundAmount || 0)
+    || Number(report.lostReceiptAmount || 0)
+    || Number(report.cashFloat || 0));
 }
 
 function reportNeedsLogoutReminder() {
@@ -1808,6 +1933,11 @@ function loadReport(id) {
   if (!report || !canViewReport(report)) return showToast('Không tìm thấy báo cáo.', 'error');
   const scopedReport = scopeReportForCurrentUser(report);
   currentReport = JSON.parse(JSON.stringify(scopedReport));
+  currentReport.advanceRows = Array.isArray(currentReport.advanceRows) ? currentReport.advanceRows : [];
+  currentReport.invoiceRows = Array.isArray(currentReport.invoiceRows) ? currentReport.invoiceRows : [];
+  currentReport.selectedRefundRowIds = Array.isArray(currentReport.selectedRefundRowIds) ? currentReport.selectedRefundRowIds : [];
+  currentReport.selectedRefundRows = Array.isArray(currentReport.selectedRefundRows) ? currentReport.selectedRefundRows : [];
+  currentReport.selectedLostCaseIds = Array.isArray(currentReport.selectedLostCaseIds) ? currentReport.selectedLostCaseIds : [];
   $('refundAmount').value = scopedReport.refundAmount ? formatMoney(scopedReport.refundAmount) : '';
   $('lostReceiptAmount').value = scopedReport.lostReceiptAmount ? formatMoney(scopedReport.lostReceiptAmount) : '';
   $('cashFloat').value = scopedReport.cashFloat ? formatMoney(scopedReport.cashFloat) : '';
@@ -1832,6 +1962,11 @@ function editReport(id) {
   // Mở đúng báo cáo gốc để sửa/upload lại, giữ nguyên mã báo cáo và ngày báo cáo.
   // Chuyển trạng thái làm việc về nháp để bắt người dùng chốt lại sau khi sửa.
   currentReport = JSON.parse(JSON.stringify(report));
+  currentReport.advanceRows = Array.isArray(currentReport.advanceRows) ? currentReport.advanceRows : [];
+  currentReport.invoiceRows = Array.isArray(currentReport.invoiceRows) ? currentReport.invoiceRows : [];
+  currentReport.selectedRefundRowIds = Array.isArray(currentReport.selectedRefundRowIds) ? currentReport.selectedRefundRowIds : [];
+  currentReport.selectedRefundRows = Array.isArray(currentReport.selectedRefundRows) ? currentReport.selectedRefundRows : [];
+  currentReport.selectedLostCaseIds = Array.isArray(currentReport.selectedLostCaseIds) ? currentReport.selectedLostCaseIds : [];
   currentReport.status = 'draft';
   currentReport.updatedAt = nowISO();
 
@@ -3200,7 +3335,7 @@ function previewHtml(html) {
       window.addEventListener('DOMContentLoaded', function(){ setPrintOrientation('portrait'); });
     <\/script>`;
   win.document.open();
-  win.document.write(`<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>Xem trước báo cáo</title><link rel="stylesheet" href="style.css?v=45"><style>body{background:#fff;padding:18px}.preview-actions{position:sticky;top:0;z-index:10;background:#fff;padding:8px;text-align:right;border-bottom:1px solid #d8e6dc;margin-bottom:10px}.print-area{display:block}.print-doc{display:block;max-width:1000px;margin:0 auto}.preview-actions button{padding:8px 14px;border-radius:10px;border:1px solid #0b8f43;background:#fff;color:#0b8f43;font-weight:700;cursor:pointer;margin-left:6px}.preview-actions button.active{background:#0b8f43;color:#fff}.preview-actions button.print-btn{background:#0b8f43;color:#fff}.preview-landscape .print-doc{max-width:1300px}@media print{.preview-actions{display:none}}</style>${previewScript}</head><body><div class="preview-actions"><button id="btnPreviewPortrait" class="active" onclick="document.getElementById('btnPreviewPortrait').classList.add('active');document.getElementById('btnPreviewLandscape').classList.remove('active');setPrintOrientation('portrait')">Trang dọc</button><button id="btnPreviewLandscape" onclick="document.getElementById('btnPreviewLandscape').classList.add('active');document.getElementById('btnPreviewPortrait').classList.remove('active');setPrintOrientation('landscape')">Trang ngang</button><button class="print-btn" onclick="window.print()">In báo cáo</button></div>${html}</body></html>`);
+  win.document.write(`<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>Xem trước báo cáo</title><link rel="stylesheet" href="style.css?v=49"><style>body{background:#fff;padding:18px}.preview-actions{position:sticky;top:0;z-index:10;background:#fff;padding:8px;text-align:right;border-bottom:1px solid #d8e6dc;margin-bottom:10px}.print-area{display:block}.print-doc{display:block;max-width:1000px;margin:0 auto}.preview-actions button{padding:8px 14px;border-radius:10px;border:1px solid #0b8f43;background:#fff;color:#0b8f43;font-weight:700;cursor:pointer;margin-left:6px}.preview-actions button.active{background:#0b8f43;color:#fff}.preview-actions button.print-btn{background:#0b8f43;color:#fff}.preview-landscape .print-doc{max-width:1300px}@media print{.preview-actions{display:none}}</style>${previewScript}</head><body><div class="preview-actions"><button id="btnPreviewPortrait" class="active" onclick="document.getElementById('btnPreviewPortrait').classList.add('active');document.getElementById('btnPreviewLandscape').classList.remove('active');setPrintOrientation('portrait')">Trang dọc</button><button id="btnPreviewLandscape" onclick="document.getElementById('btnPreviewLandscape').classList.add('active');document.getElementById('btnPreviewPortrait').classList.remove('active');setPrintOrientation('landscape')">Trang ngang</button><button class="print-btn" onclick="window.print()">In báo cáo</button></div>${html}</body></html>`);
   win.document.close();
 }
 
