@@ -7,7 +7,7 @@
   <link rel="icon" href="favicon.ico?v=51" sizes="any" />
   <link rel="shortcut icon" href="favicon.ico?v=51" />
   <link rel="apple-touch-icon" href="favicon-192.png?v=51" />
-  <link rel="stylesheet" href="style.css?v=51" />
+  <link rel="stylesheet" href="style.css?v=52" />
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
@@ -272,12 +272,32 @@
               <button id="btnBuildCashbook" class="btn primary">Lập báo cáo</button>
               <button id="btnPrintCashbook" class="btn">In</button>
               <button id="btnExportCashbook" class="btn">Xuất Excel/CSV</button>
+              <button id="btnBuildTreasurerAdvanceIncome" class="btn">BC thu tạm ứng</button>
+              <button id="btnPrintTreasurerAdvanceIncome" class="btn">In BC thu</button>
+              <button id="btnBuildTreasurerRefundExpense" class="btn">BC chi thu hồi</button>
+              <button id="btnPrintTreasurerRefundExpense" class="btn">In BC chi</button>
               <button id="btnBuildRecoveredReceipts" class="btn">DS biên lai đã thu hồi</button>
               <button id="btnPrintRecoveredReceipts" class="btn">In DS thu hồi</button>
               <button id="btnListProblemReceipts" class="btn danger">Liệt kê phiếu thu có vấn đề</button>
             </div>
           </div>
           <div class="table-wrap"><table id="cashbookTable"></table></div>
+        </div>
+
+        <div class="card" id="treasurerAdvanceIncomeCard">
+          <div class="table-head">
+            <h3>Báo cáo thu tạm ứng</h3>
+            <div class="summary-line" id="treasurerAdvanceIncomeSummary"></div>
+          </div>
+          <div class="table-wrap"><table id="treasurerAdvanceIncomeTable"></table></div>
+        </div>
+
+        <div class="card" id="treasurerRefundExpenseCard">
+          <div class="table-head">
+            <h3>Báo cáo chi thu hồi tạm ứng</h3>
+            <div class="summary-line" id="treasurerRefundExpenseSummary"></div>
+          </div>
+          <div class="table-wrap"><table id="treasurerRefundExpenseTable"></table></div>
         </div>
 
         <div class="card" id="recoveredReceiptCard">
@@ -472,7 +492,7 @@
 
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
-  <script src="firebase-config.js?v=51"></script>
-  <script src="script.js?v=51"></script>
+  <script src="firebase-config.js?v=52"></script>
+  <script src="script.js?v=52"></script>
 </body>
 </html>

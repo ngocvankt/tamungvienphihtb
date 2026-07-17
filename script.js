@@ -32,7 +32,7 @@ const FIREBASE_CORE_KEYS = [APP.users, APP.settings];
 const FIREBASE_TEST_KEYS = [APP.reports, APP.advances, APP.invoices, APP.lostCases, APP.refunds];
 const FIREBASE_CLEAR_MARKER_KEY = 'tuvp_last_clear_test_v1';
 const FIREBASE_BUSINESS_MARKER_KEY = '_businessDataAfterClearAt';
-const APP_VERSION = 'v50';
+const APP_VERSION = 'v52';
 
 let firebaseSyncReady = false;
 let firebaseSyncDisabled = false;
@@ -45,6 +45,8 @@ let selectedReceipt = null;
 let currentLostCaseId = null;
 let lostImagesBase64 = [];
 let cashbookRows = [];
+let treasurerAdvanceIncomeRows = [];
+let treasurerRefundExpenseRows = [];
 let recoveredReceiptRows = [];
 let problemReceiptRows = [];
 let receiptHistorySelected = new Set();
@@ -2466,6 +2468,87 @@ function renderCashbook() {
 }
 
 
+function readTreasurerPeriod() {
+  const from = $('cashbookFrom')?.value || '';
+  const to = $('cashbookTo')?.value || '';
+  if (!from || !to) {
+    showToast('Chọn từ ngày và đến ngày trước khi lập báo cáo.', 'error');
+    return null;
+  }
+  if (from > to) {
+    showToast('Từ ngày không được lớn hơn đến ngày.', 'error');
+    return null;
+  }
+  return { from, to };
+}
+
+function buildTreasurerAdvanceIncomeReport() {
+  const period = readTreasurerPeriod();
+  if (!period) return;
+  const unique = new Map();
+  getAdvances()
+    .filter(row => rowInPrintPeriod(row.dateISO || parseDateToISO(row.date), period.from, period.to))
+    .forEach(row => {
+      const key = row.key || `${row.receiptNo || ''}|${row.dateISO || row.date || ''}|${row.patientName || ''}`;
+      if (!unique.has(key)) unique.set(key, {
+        receiptNo: row.receiptNo || '',
+        date: row.date || formatDisplayDate(row.dateISO),
+        dateISO: row.dateISO || parseDateToISO(row.date),
+        patientName: row.patientName || '',
+        age: row.age || '',
+        gender: row.gender || '',
+        department: row.department || '',
+        amount: Number(row.amount || 0),
+        collector: row.collector || ''
+      });
+    });
+  treasurerAdvanceIncomeRows = Array.from(unique.values())
+    .sort((a, b) => String(a.dateISO || '').localeCompare(String(b.dateISO || '')) || String(a.receiptNo || '').localeCompare(String(b.receiptNo || ''), 'vi', { numeric: true }));
+  renderTreasurerAdvanceIncomeReport();
+  $('treasurerAdvanceIncomeCard')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  showToast(treasurerAdvanceIncomeRows.length ? 'Đã lập báo cáo thu tạm ứng.' : 'Không có dữ liệu thu tạm ứng trong thời gian đã chọn.', treasurerAdvanceIncomeRows.length ? '' : 'warn');
+}
+
+function renderTreasurerAdvanceIncomeReport() {
+  renderTable('treasurerAdvanceIncomeTable', ['Số phiếu thu', 'Ngày thu', 'Họ tên bệnh nhân', 'Tuổi', 'Khoa/phòng', 'Số tiền thu', 'Người thu'], treasurerAdvanceIncomeRows, r => `
+    <tr>
+      <td>${escapeHtml(r.receiptNo)}</td><td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.patientName)}</td><td>${escapeHtml(r.age)}</td>
+      <td>${escapeHtml(r.department)}</td><td class="money">${formatMoney(r.amount)}</td><td>${escapeHtml(r.collector)}</td>
+    </tr>`);
+  const total = treasurerAdvanceIncomeRows.reduce((s, r) => s + Number(r.amount || 0), 0);
+  setTableFooter('treasurerAdvanceIncomeTable', `<tr class="total-row"><th colspan="5" style="text-align:right">Tổng cộng</th><th class="money">${formatMoney(total)}</th><th></th></tr>`);
+  if ($('treasurerAdvanceIncomeSummary')) $('treasurerAdvanceIncomeSummary').textContent = `Tổng số biên lai: ${treasurerAdvanceIncomeRows.length}; tổng tiền thu: ${formatMoney(total)}`;
+}
+
+function buildTreasurerRefundExpenseReport() {
+  const period = readTreasurerPeriod();
+  if (!period) return;
+  treasurerRefundExpenseRows = collectRecoveredRowsByParams({
+    from: period.from,
+    to: period.to,
+    payer: '',
+    source: 'all',
+    keyword: ''
+  });
+  renderTreasurerRefundExpenseReport();
+  $('treasurerRefundExpenseCard')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  showToast(treasurerRefundExpenseRows.length ? 'Đã lập báo cáo chi thu hồi tạm ứng.' : 'Không có dữ liệu chi thu hồi trong thời gian đã chọn.', treasurerRefundExpenseRows.length ? '' : 'warn');
+}
+
+function renderTreasurerRefundExpenseReport() {
+  renderTable('treasurerRefundExpenseTable', ['Số phiếu thu', 'Ngày thu', 'Họ tên bệnh nhân', 'Tuổi', 'Số tiền đã tạm ứng', 'Số tiền chi/thu hồi', 'Ngày chi/thu hồi', 'Người thực hiện', 'Ghi chú'], treasurerRefundExpenseRows, r => `
+    <tr>
+      <td>${escapeHtml(r.receiptNo)}</td><td>${escapeHtml(r.receiptDate)}</td><td>${escapeHtml(r.patientName)}</td><td>${escapeHtml(r.age)}</td>
+      <td class="money">${formatMoney(r.amountAdvance)}</td><td class="money">${formatMoney(r.amountRecovered)}</td>
+      <td>${escapeHtml(r.payDate)}</td><td>${escapeHtml(r.payer)}</td><td>${escapeHtml(r.note || '')}</td>
+    </tr>`);
+  const totalAdvance = treasurerRefundExpenseRows.reduce((s, r) => s + Number(r.amountAdvance || 0), 0);
+  const totalExpense = treasurerRefundExpenseRows.reduce((s, r) => s + Number(r.amountRecovered || 0), 0);
+  setTableFooter('treasurerRefundExpenseTable', `<tr class="total-row"><th colspan="4" style="text-align:right">Tổng cộng</th><th class="money">${formatMoney(totalAdvance)}</th><th class="money">${formatMoney(totalExpense)}</th><th colspan="3"></th></tr>`);
+  if ($('treasurerRefundExpenseSummary')) $('treasurerRefundExpenseSummary').textContent = `Tổng số biên lai: ${treasurerRefundExpenseRows.length}; tổng tiền chi/thu hồi: ${formatMoney(totalExpense)}`;
+}
+
+
 function buildRecoveredReceiptsReport() {
   const from = $('cashbookFrom').value;
   const to = $('cashbookTo').value;
@@ -3067,6 +3150,8 @@ async function clearTestData() {
     currentLostCaseId = null;
     lostImagesBase64 = [];
     cashbookRows = [];
+    treasurerAdvanceIncomeRows = [];
+    treasurerRefundExpenseRows = [];
     recoveredReceiptRows = [];
     problemReceiptRows = [];
     receiptHistorySelected = new Set();
@@ -3703,6 +3788,36 @@ function printLostCaseById(id) {
 window.printLostCaseById = printLostCaseById;
 
 
+
+function makeTreasurerAdvanceIncomeHtml() {
+  const from = $('cashbookFrom')?.value || '';
+  const to = $('cashbookTo')?.value || '';
+  const total = treasurerAdvanceIncomeRows.reduce((s, r) => s + Number(r.amount || 0), 0);
+  const body = treasurerAdvanceIncomeRows.map(r => `<tr><td>${escapeHtml(r.receiptNo)}</td><td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.patientName)}</td><td>${escapeHtml(r.age)}</td><td>${escapeHtml(r.department)}</td><td style="text-align:right">${formatMoney(r.amount)}</td><td>${escapeHtml(r.collector)}</td></tr>`).join('') || '<tr><td colspan="7">Không có dữ liệu.</td></tr>';
+  const totalRow = treasurerAdvanceIncomeRows.length ? `<tr class="print-total-row"><th colspan="5" style="text-align:right">Tổng cộng</th><th style="text-align:right">${formatMoney(total)}</th><th></th></tr>` : '';
+  return `${makePrintHeader('Báo cáo thu tạm ứng', `Từ ngày ${escapeHtml(formatDisplayDate(from))} đến ngày ${escapeHtml(formatDisplayDate(to))}`)}
+    <table class="cashbook-print-table"><thead><tr><th>Số phiếu thu</th><th>Ngày thu</th><th>Họ tên bệnh nhân</th><th>Tuổi</th><th>Khoa/phòng</th><th>Số tiền thu</th><th>Người thu</th></tr></thead>
+      <tbody>${body}${totalRow}</tbody>
+    </table>
+    <div class="print-sign"><div><b>Người lập</b><br><br><br><br><br><br></div><div><b>Thủ quỹ</b><br><br><br><br><br><br>${escapeHtml(currentUser.fullName || '')}</div></div>
+    </div>`;
+}
+
+function makeTreasurerRefundExpenseHtml() {
+  const from = $('cashbookFrom')?.value || '';
+  const to = $('cashbookTo')?.value || '';
+  const totalAdvance = treasurerRefundExpenseRows.reduce((s, r) => s + Number(r.amountAdvance || 0), 0);
+  const totalExpense = treasurerRefundExpenseRows.reduce((s, r) => s + Number(r.amountRecovered || 0), 0);
+  const body = treasurerRefundExpenseRows.map(r => `<tr><td>${escapeHtml(r.receiptNo)}</td><td>${escapeHtml(r.receiptDate)}</td><td>${escapeHtml(r.patientName)}</td><td>${escapeHtml(r.age)}</td><td style="text-align:right">${formatMoney(r.amountAdvance)}</td><td style="text-align:right">${formatMoney(r.amountRecovered)}</td><td>${escapeHtml(r.payDate)}</td><td>${escapeHtml(r.payer)}</td><td>${escapeHtml(r.note || '')}</td></tr>`).join('') || '<tr><td colspan="9">Không có dữ liệu.</td></tr>';
+  const totalRow = treasurerRefundExpenseRows.length ? `<tr class="print-total-row"><th colspan="4" style="text-align:right">Tổng cộng</th><th style="text-align:right">${formatMoney(totalAdvance)}</th><th style="text-align:right">${formatMoney(totalExpense)}</th><th colspan="3"></th></tr>` : '';
+  return `${makePrintHeader('Báo cáo chi thu hồi tạm ứng', `Từ ngày ${escapeHtml(formatDisplayDate(from))} đến ngày ${escapeHtml(formatDisplayDate(to))}`)}
+    <table class="cashbook-print-table"><thead><tr><th>Số phiếu thu</th><th>Ngày thu</th><th>Họ tên bệnh nhân</th><th>Tuổi</th><th>Số tiền đã tạm ứng</th><th>Số tiền chi/thu hồi</th><th>Ngày chi/thu hồi</th><th>Người thực hiện</th><th>Ghi chú</th></tr></thead>
+      <tbody>${body}${totalRow}</tbody>
+    </table>
+    <div class="print-sign"><div><b>Người lập</b><br><br><br><br><br><br></div><div><b>Thủ quỹ</b><br><br><br><br><br><br>${escapeHtml(currentUser.fullName || '')}</div></div>
+    </div>`;
+}
+
 function makeRecoveredReceiptsHtml() {
   const from = $('cashbookFrom').value;
   const to = $('cashbookTo').value;
@@ -3859,6 +3974,10 @@ function bindEvents() {
   $('btnReloadTreasurerLost').addEventListener('click', renderTreasurerLostCases);
   $('btnAddRefund').addEventListener('click', addRefund);
   $('btnBuildCashbook').addEventListener('click', buildCashbook);
+  if ($('btnBuildTreasurerAdvanceIncome')) $('btnBuildTreasurerAdvanceIncome').addEventListener('click', buildTreasurerAdvanceIncomeReport);
+  if ($('btnPrintTreasurerAdvanceIncome')) $('btnPrintTreasurerAdvanceIncome').addEventListener('click', () => { if (!treasurerAdvanceIncomeRows.length) buildTreasurerAdvanceIncomeReport(); if (treasurerAdvanceIncomeRows.length) printHtml(makeTreasurerAdvanceIncomeHtml()); });
+  if ($('btnBuildTreasurerRefundExpense')) $('btnBuildTreasurerRefundExpense').addEventListener('click', buildTreasurerRefundExpenseReport);
+  if ($('btnPrintTreasurerRefundExpense')) $('btnPrintTreasurerRefundExpense').addEventListener('click', () => { if (!treasurerRefundExpenseRows.length) buildTreasurerRefundExpenseReport(); if (treasurerRefundExpenseRows.length) printHtml(makeTreasurerRefundExpenseHtml()); });
   if ($('btnBuildRecoveredReceipts')) $('btnBuildRecoveredReceipts').addEventListener('click', buildRecoveredReceiptsReport);
   if ($('btnPrintRecoveredReceipts')) $('btnPrintRecoveredReceipts').addEventListener('click', () => { if (!recoveredReceiptRows.length) buildRecoveredReceiptsReport(); if (recoveredReceiptRows.length) printHtml(makeRecoveredReceiptsHtml()); });
   if ($('btnOpenRecoveredParams')) $('btnOpenRecoveredParams').addEventListener('click', openRecoveredParamsModal);
