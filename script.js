@@ -1163,11 +1163,24 @@ function getVisibleReceiptHistoryRows() {
   return getReceiptHistoryRows().filter(r => receiptHistoryMatches(r, q));
 }
 
+function getSelectedRefundRowsFromIds(ids, report = currentReport) {
+  const selected = new Set(ids || []);
+  if (!selected.size) return [];
+
+  const sourceRows = getReceiptHistoryRows({ includeClosed: true });
+  const rowMap = new Map(sourceRows.map(row => [row.id, row]));
+  (report?.selectedRefundRows || []).forEach(row => {
+    if (row?.id && !rowMap.has(row.id)) rowMap.set(row.id, row);
+  });
+
+  return Array.from(selected)
+    .map(id => rowMap.get(id))
+    .filter(Boolean);
+}
+
 function updateReceiptHistorySelectedTotal() {
-  const allRows = getReceiptHistoryRows();
-  const total = allRows
-    .filter(r => receiptHistorySelected.has(r.id))
-    .reduce((s, r) => s + Number(r.amount || 0), 0);
+  const selectedRows = getSelectedRefundRowsFromIds(Array.from(receiptHistorySelected), currentReport);
+  const total = selectedRows.reduce((s, r) => s + Number(r.amount || 0), 0);
   if ($('receiptHistoryTotal')) $('receiptHistoryTotal').textContent = formatMoney(total);
 
   const visibleRows = getVisibleReceiptHistoryRows();
@@ -1256,15 +1269,30 @@ function closeReceiptHistoryModal() {
 }
 
 function useReceiptHistoryTotal() {
-  const total = getReceiptHistoryRows()
-    .filter(r => receiptHistorySelected.has(r.id))
-    .reduce((s, r) => s + Number(r.amount || 0), 0);
-  if (!total) return showToast('Chưa tích chọn biên lai thu hồi tạm ứng.', 'error');
-  currentReport.selectedRefundRowIds = Array.from(receiptHistorySelected);
+  const selectedIds = Array.from(receiptHistorySelected);
+  const selectedRows = getSelectedRefundRowsFromIds(selectedIds, currentReport);
+  const total = selectedRows.reduce((s, r) => s + Number(r.amount || 0), 0);
+  if (!selectedIds.length || !total) return showToast('Chưa tích chọn biên lai thu hồi tạm ứng.', 'error');
+
+  currentReport.selectedRefundRowIds = selectedIds;
+  currentReport.selectedRefundRows = selectedRows.map(r => ({
+    id: r.id,
+    date: r.date || '',
+    dateISO: r.dateISO || parseDateToISO(r.date),
+    receiptNo: r.receiptNo || '',
+    patientName: r.patientName || '',
+    age: r.age || '',
+    gender: r.gender || '',
+    department: r.department || '',
+    amount: Number(r.amount || 0),
+    collector: r.collector || ''
+  }));
   currentReport.reportDateISO = currentReport.reportDateISO || todayISO();
   currentReport.reportDate = currentReport.reportDate || formatPrintDate(currentReport.reportDateISO);
+
   const lostAmount = parseMoney($('lostReceiptAmount').value);
   $('refundAmount').value = formatMoney(total + lostAmount);
+  renderSelectedRecoveredRows();
   updateReportTotals();
   closeReceiptHistoryModal();
   showToast('Đã lấy tổng tiền biên lai được chọn vào ô tạm ứng thu hồi.');
@@ -1272,10 +1300,9 @@ function useReceiptHistoryTotal() {
 
 
 function getSelectedRecoveredRowsForReport(report = currentReport) {
-  const ids = new Set(report.selectedRefundRowIds || []);
-  if (!ids.size) return [];
-  return getReceiptHistoryRows({ includeClosed: true })
-    .filter(row => ids.has(row.id))
+  const ids = report.selectedRefundRowIds || [];
+  if (!ids.length) return [];
+  return getSelectedRefundRowsFromIds(ids, report)
     .map(row => ({
       ...row,
       recoveredDateISO: report.reportDateISO || (report.createdAt || '').slice(0, 10) || todayISO(),
@@ -1431,6 +1458,7 @@ function useLostReceiptHistoryTotal() {
   const currentRefund = parseMoney($('refundAmount').value);
   $('lostReceiptAmount').value = formatMoney(total);
   $('refundAmount').value = formatMoney(Math.max(0, currentRefund - oldLost) + total);
+  renderSelectedRecoveredRows();
   updateReportTotals();
   closeLostReceiptHistoryModal();
   showToast('Đã lấy tổng tiền hồ sơ mất phiếu được chọn vào ô tương ứng.');
@@ -2977,14 +3005,12 @@ function rowInPrintPeriod(rowDateISO, fromISO, toISO) {
   return true;
 }
 
-function amountFromSelectedRefundRows(selectedIds, fromISO, toISO, reportDateISO = '') {
+function amountFromSelectedRefundRows(selectedIds, fromISO, toISO, reportDateISO = '', report = currentReport) {
   if (!selectedIds || !selectedIds.length) return null;
   // Thu hồi tạm ứng đi theo NGÀY BÁO CÁO, không đi theo ngày thu ban đầu của biên lai.
   // Vì vậy khi in/lọc theo thời gian, nếu ngày báo cáo nằm trong khoảng thì lấy toàn bộ biên lai đã tích chọn.
   if (reportDateISO && !rowInPrintPeriod(reportDateISO, fromISO, toISO)) return 0;
-  const selected = new Set(selectedIds);
-  return getReceiptHistoryRows({ includeClosed: true })
-    .filter(r => selected.has(r.id))
+  return getSelectedRefundRowsFromIds(selectedIds, report)
     .reduce((s, r) => s + Number(r.amount || 0), 0);
 }
 
@@ -3003,7 +3029,7 @@ function applyReportPrintPeriod(report) {
   const invRows = (report.invoiceRows || []).filter(r => rowInPrintPeriod(r.paymentDateISO || parseDateToISO(r.paymentDate), fromISO, toISO));
   const sumAdvance = advRows.reduce((s, r) => s + Number(r.amount || 0), 0);
   const sumInvoice = invRows.reduce((s, r) => s + Number(r.amount || 0), 0);
-  const selectedRefundAmount = amountFromSelectedRefundRows(report.selectedRefundRowIds, fromISO, toISO, report.reportDateISO || (report.createdAt || '').slice(0, 10));
+  const selectedRefundAmount = amountFromSelectedRefundRows(report.selectedRefundRowIds, fromISO, toISO, report.reportDateISO || (report.createdAt || '').slice(0, 10), report);
   const selectedLostAmount = amountFromSelectedLostCases(report.selectedLostCaseIds, fromISO, toISO);
   const lostReceiptAmount = selectedLostAmount === null ? Number(report.lostReceiptAmount || 0) : selectedLostAmount;
   const baseRefundAmount = selectedRefundAmount === null ? Number(report.refundAmount || 0) : selectedRefundAmount;
