@@ -1054,3 +1054,188 @@ input, select, textarea {
     line-height: 1.42 !important;
   }
 }
+
+/* v53-css: chỉ chỉnh giao diện tab Thủ quỹ, không đổi logic/chức năng */
+#tabTreasurer {
+  --treasurer-soft: #f7fcf9;
+  --treasurer-border: #cfe4d6;
+}
+
+#tabTreasurer .section-head {
+  background: linear-gradient(90deg, #ffffff, #f2fbf5);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 14px 16px;
+  box-shadow: 0 8px 22px rgba(8, 77, 41, .05);
+}
+
+#tabTreasurer .section-head h2 {
+  font-size: 22px !important;
+}
+
+#tabTreasurer .section-head p {
+  max-width: 760px;
+}
+
+/* Báo cáo chờ xác nhận: cho full ngang, tránh bị bó nửa màn hình khi ô bên cạnh đang ẩn */
+#tabTreasurer > .grid.two,
+#tabTreasurer .treasurer-confirm-grid {
+  grid-template-columns: 1fr !important;
+}
+
+#tabTreasurer .card:has(#treasurerReportsTable) {
+  max-width: none;
+}
+
+#tabTreasurer .card:has(#treasurerReportsTable) .table-wrap {
+  max-height: 260px;
+}
+
+/* Khối báo cáo chính của thủ quỹ */
+#tabTreasurer .card:has(#cashbookTable) {
+  border-color: var(--treasurer-border);
+  background: linear-gradient(180deg, #ffffff, #fbfffc);
+}
+
+#tabTreasurer .card:has(#cashbookTable) .table-head {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  align-items: stretch;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+#tabTreasurer .card:has(#cashbookTable) .table-head h3 {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 10px 12px;
+  min-height: 54px;
+  border-radius: 14px;
+  background: #f0faf4;
+  border: 1px solid var(--treasurer-border);
+  color: var(--green-dark);
+  line-height: 1.25;
+}
+
+#tabTreasurer .card:has(#cashbookTable) .inline-actions {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(116px, 1fr));
+  gap: 8px;
+  justify-content: stretch;
+  align-items: stretch;
+  padding: 10px;
+  border: 1px solid var(--treasurer-border);
+  border-radius: 14px;
+  background: var(--treasurer-soft);
+}
+
+#tabTreasurer .card:has(#cashbookTable) .inline-actions input,
+#tabTreasurer .card:has(#cashbookTable) .inline-actions .btn {
+  width: 100%;
+  min-height: 39px;
+  margin: 0;
+  white-space: nowrap;
+}
+
+#tabTreasurer .card:has(#cashbookTable) .inline-actions input[type="date"] {
+  background: #ffffff;
+  font-weight: 700;
+  color: #0d4a29;
+}
+
+#tabTreasurer .card:has(#cashbookTable) .inline-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding-left: 9px;
+  padding-right: 9px;
+}
+
+#tabTreasurer #btnBuildCashbook {
+  box-shadow: 0 8px 16px rgba(7, 140, 69, .14);
+}
+
+#tabTreasurer #btnListProblemReceipts {
+  grid-column: span 2;
+}
+
+#tabTreasurer .card:has(#cashbookTable) .table-wrap {
+  max-height: 420px;
+  background: #fff;
+}
+
+/* Các báo cáo con: phân khối rõ ràng, đỡ rối khi nhìn màn hình thủ quỹ */
+#tabTreasurer #treasurerAdvanceIncomeCard,
+#tabTreasurer #treasurerRefundExpenseCard,
+#tabTreasurer #recoveredReceiptCard,
+#tabTreasurer #problemReceiptCard {
+  border-color: var(--treasurer-border);
+  box-shadow: 0 8px 22px rgba(8, 77, 41, .045);
+}
+
+#tabTreasurer #treasurerAdvanceIncomeCard .table-head,
+#tabTreasurer #treasurerRefundExpenseCard .table-head,
+#tabTreasurer #recoveredReceiptCard .table-head,
+#tabTreasurer #problemReceiptCard .table-head {
+  padding: 10px 12px;
+  margin: -2px -2px 10px;
+  border-radius: 13px;
+  background: #f3fbf6;
+  border: 1px solid #d9ebdf;
+}
+
+#tabTreasurer #treasurerAdvanceIncomeCard h3,
+#tabTreasurer #treasurerRefundExpenseCard h3,
+#tabTreasurer #recoveredReceiptCard h3,
+#tabTreasurer #problemReceiptCard h3 {
+  color: var(--green-dark);
+  font-size: 17px;
+}
+
+#tabTreasurer .summary-line {
+  color: var(--green-dark);
+  font-weight: 800;
+  text-align: right;
+}
+
+#tabTreasurer .table-wrap {
+  border-color: var(--treasurer-border);
+}
+
+#tabTreasurer table th {
+  background: #eef9f2;
+}
+
+#tabTreasurer table td,
+#tabTreasurer table th {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+/* Màn hình hẹp: đưa nút về dạng gọn theo cột */
+@media (max-width: 1280px) {
+  #tabTreasurer .card:has(#cashbookTable) .table-head {
+    grid-template-columns: 1fr;
+  }
+  #tabTreasurer .card:has(#cashbookTable) .inline-actions {
+    grid-template-columns: repeat(4, minmax(120px, 1fr));
+  }
+}
+
+@media (max-width: 860px) {
+  #tabTreasurer .card:has(#cashbookTable) .inline-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  #tabTreasurer #btnListProblemReceipts {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 560px) {
+  #tabTreasurer .card:has(#cashbookTable) .inline-actions {
+    grid-template-columns: 1fr;
+  }
+}
